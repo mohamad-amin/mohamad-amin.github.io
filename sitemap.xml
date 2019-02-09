@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+  xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  
+  <url>
+    <loc>/posts/coming-soon/</loc>
+    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+  </url>
+  
+  <url>
+    <loc>/roozneveshts/coming-soon/</loc>
+    <lastmod>2019-02-09T22:58:01+03:30</lastmod>
+  </url>
+  
+  <url>
+    <loc>/about/</loc>
+    <lastmod>2018-12-29T14:22:32+03:30</lastmod>
+  </url>
+  
+  <url>
+    <loc>/</loc>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/begining/</loc>
+    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/</loc>
+    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/notags/</loc>
+    <lastmod>2019-02-09T22:58:01+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/posts/</loc>
+    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/roozneveshts/</loc>
+    <lastmod>2019-02-09T22:58:01+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/tag/</loc>
+    <lastmod>2019-02-09T22:58:01+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/</loc>
+    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+</urlset>
