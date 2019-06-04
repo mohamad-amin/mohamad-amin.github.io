@@ -3,6 +3,11 @@
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
   
   <url>
+    <loc>/roozneveshts/1_sargashte/</loc>
+    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
+  </url>
+  
+  <url>
     <loc>/posts/coming-soon/</loc>
     <lastmod>2019-02-09T23:06:48+03:30</lastmod>
   </url>
@@ -30,7 +35,7 @@
   
   <url>
     <loc>/</loc>
-    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
     <priority>0</priority>
   </url>
   
@@ -47,8 +52,26 @@
   </url>
   
   <url>
+    <loc>/tags/pressure/</loc>
+    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/rooznevesht/</loc>
+    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
     <loc>/roozneveshts/</loc>
-    <lastmod>2019-02-09T22:58:01+03:30</lastmod>
+    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/stress/</loc>
+    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
     <priority>0</priority>
   </url>
   
