@@ -7,10 +7,28 @@
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
     <copyright>This work is licensed under a Creative Commons Attribution-NonCommercial 4.0 International License.</copyright>
-    <lastBuildDate>Sat, 09 Feb 2019 23:06:48 +0330</lastBuildDate>
+    <lastBuildDate>Tue, 24 Sep 2019 20:57:53 +0330</lastBuildDate>
     
 	<atom:link href="/index.xml" rel="self" type="application/rss+xml" />
     
+    
+    <item>
+      <title>What I Learnt From AUT Optimization Course</title>
+      <link>/posts/1_what_i_learnt_from_aut_optimization_course/</link>
+      <pubDate>Tue, 24 Sep 2019 20:57:53 +0330</pubDate>
+      
+      <guid>/posts/1_what_i_learnt_from_aut_optimization_course/</guid>
+      <description>I took the optimization course this semester (Fall 2018), which was offered for the master students under supervision of Dr. Maryam Amirmazlaghani at AUT. As many of my friends and other students asked me about how the course was offered and what are the main topics convered in the course and how do they relate to machine learning, I decided to write this article to summarize what I learnt and further clarify what you can learn by taking this course.</description>
+    </item>
+    
+    <item>
+      <title>سرگشته</title>
+      <link>/roozneveshts/1_sargashte/</link>
+      <pubDate>Tue, 04 Jun 2019 20:05:49 +0430</pubDate>
+      
+      <guid>/roozneveshts/1_sargashte/</guid>
+      <description>امروز برای مصاحبه‌ی حضوری سفارت بودم. مدارکم رو چک کرد و چندتا سوال ازم پرسید. منم دعوت‌نامه‌ی جدیدم رو با قرارداد خونه‌ای که برای تابستون اجاره کردم بهش دادم. آفیسر وقتی دعوت‌نامه‌ی جدید رو دید تعجب‌کرد و شروع کرد به مقایسه کردنش با دعوت‌نامه‌ی قبلی. منم که دیدم تعجب کرده حس کردم بهتره براش توضیح بدم که چرا دعوت‌نامه عوض شده. ازش پرسیدم که می‌خوای توضیح بدم برات که چه چیزایی و چرا عوض شده؟ گفت آره آره حتما.</description>
+    </item>
     
     <item>
       <title>Coming Soon</title>

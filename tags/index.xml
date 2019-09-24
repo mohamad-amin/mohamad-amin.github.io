@@ -22,11 +22,38 @@
     </item>
     
     <item>
+      <title>Course</title>
+      <link>/tags/course/</link>
+      <pubDate>Tue, 24 Sep 2019 20:57:53 +0330</pubDate>
+      
+      <guid>/tags/course/</guid>
+      <description></description>
+    </item>
+    
+    <item>
+      <title>Mathematics</title>
+      <link>/tags/mathematics/</link>
+      <pubDate>Tue, 24 Sep 2019 20:57:53 +0330</pubDate>
+      
+      <guid>/tags/mathematics/</guid>
+      <description></description>
+    </item>
+    
+    <item>
       <title>Notags</title>
       <link>/tags/notags/</link>
       <pubDate>Sat, 09 Feb 2019 22:58:01 +0330</pubDate>
       
       <guid>/tags/notags/</guid>
+      <description></description>
+    </item>
+    
+    <item>
+      <title>Optimization</title>
+      <link>/tags/optimization/</link>
+      <pubDate>Tue, 24 Sep 2019 20:57:53 +0330</pubDate>
+      
+      <guid>/tags/optimization/</guid>
       <description></description>
     </item>
     
@@ -63,6 +90,15 @@
       <pubDate>Sat, 09 Feb 2019 22:58:01 +0330</pubDate>
       
       <guid>/tags/tag/</guid>
+      <description></description>
+    </item>
+    
+    <item>
+      <title>University</title>
+      <link>/tags/university/</link>
+      <pubDate>Tue, 24 Sep 2019 20:57:53 +0330</pubDate>
+      
+      <guid>/tags/university/</guid>
       <description></description>
     </item>
     

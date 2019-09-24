@@ -3,6 +3,11 @@
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
   
   <url>
+    <loc>/posts/1_what_i_learnt_from_aut_optimization_course/</loc>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
+  </url>
+  
+  <url>
     <loc>/roozneveshts/1_sargashte/</loc>
     <lastmod>2019-06-04T20:05:49+04:30</lastmod>
   </url>
@@ -34,8 +39,20 @@
   </url>
   
   <url>
+    <loc>/tags/course/</loc>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
     <loc>/</loc>
-    <lastmod>2019-06-04T20:05:49+04:30</lastmod>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/mathematics/</loc>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
     <priority>0</priority>
   </url>
   
@@ -46,8 +63,14 @@
   </url>
   
   <url>
+    <loc>/tags/optimization/</loc>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
     <loc>/posts/</loc>
-    <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
     <priority>0</priority>
   </url>
   
@@ -84,6 +107,12 @@
   <url>
     <loc>/tags/</loc>
     <lastmod>2019-02-09T23:06:48+03:30</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>/tags/university/</loc>
+    <lastmod>2019-09-24T20:57:53+03:30</lastmod>
     <priority>0</priority>
   </url>
   
