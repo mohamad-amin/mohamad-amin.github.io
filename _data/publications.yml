@@ -1,22 +1,30 @@
 main:
 
-  - title: Continual Learning for Abdominal Multi-Organ and Tumor Segmentation
-    authors: Yixiao Zhang, Xinyi Li, Huimiao Chen, Alan Yuille, <strong>Yaoyao Liu*</strong>, Zongwei Zhou* (*Corresponding authors)
-    conference_short: MICCAI
-    conference: International Conference on Medical Image Computing and Computer-Assisted Intervention <strong>(MICCAI)</strong>, 2023.
-    pdf: https://arxiv.org/pdf/2306.00988.pdf
-    code: https://github.com/MrGiovanni/ContinualLearning
-    bibtex: https://bib.yliu.me/MICCAI23.txt
+  - title: Making Look-Ahead Active Learning Strategies Feasible with Neural Tangent Kernels.
+    authors: Mohamad Amin Mohamadi, Wonho Bae, Danica J. Sutherland.
+    conference: Advances in Neural Information Processing Systems, 2022.
+    pdf: https://arxiv.org/pdf/2206.12569
+    code: https://github.com/mohamad-amin/ntk-lookahead-active-learning
+    conference_short: NeurIPS 2022
     image: ./assets/img/teaser_example_2.png
-    notes: Early Accept
-
-  - title: "Mnemonics Training: Multi-Class Incremental Learning without Forgetting"
-    authors: <strong>Yaoyao Liu</strong>, Yuting Su, An-An Liu, Bernt Schiele, Qianru Sun
-    conference_short: CVPR
-    conference: IEEE/CVF Conference on Computer Vision and Pattern Recognition <strong>(CVPR)</strong>, 2020.
-    pdf: https://arxiv.org/pdf/2002.10211.pdf
-    code: https://github.com/yaoyao-liu/class-incremental-learning/tree/main/mnemonics-training
-    page: https://class-il.mpi-inf.mpg.de/mnemonics/
-    bibtex: https://class-il.mpi-inf.mpg.de/mnemonics/
-    notes: Oral Presentation
-    image: ./assets/img/teaser_example.png
+    
+  - title: A Fast, Well-founded Approximation to the Empirical Neural Tangent Kernel.
+    authors: Mohamad Amin Mohamadi, Wonho Bae, Danica J. Sutherland.
+    conference: International Conference on Machine Learning, 2023.
+    pdf: https://arxiv.org/pdf/2206.12543
+    conference_short: ICML 2023
+    image: ./assets/img/teaser_example_2.png
+    
+  - title: Why Do You Grok? A Theoretical Analysis on Grokking Modular Addition.
+    authors: Mohamad Amin Mohamadi, Zhiyuan Li, Lei Wu, Danica J. Sutherland.
+    conference: Forty-first International Conference on Machine Learning, 2024.
+    pdf: https://arxiv.org/pdf/2407.12332
+    conference_short: ICML 2024
+    image: ./assets/img/teaser_example_2.png
+    
+  - title: Adam Exploits ℓ∞-geometry of Loss Landscape via Coordinate-wise Adaptivity.
+    authors: Shuo Xie, Mohamad Amin Mohamadi, Zhiyuan Li.
+    conference: High-dimensional Learning Dynamics 2024: The Emergence of Structure and Reasoning, 2024.
+    pdf: https://openreview.net/forum?id=NexAvDkQ4U
+    conference_short: ICML 2024 - HDLD Workshop
+    image: ./assets/img/teaser_example_2.png
