@@ -3,7 +3,7 @@ main:
   - title: "Adam Exploits ℓ∞-geometry of Loss Landscape via Coordinate-wise Adaptivity."
     authors: "Shuo Xie, Mohamad Amin Mohamadi, Zhiyuan Li."
     conference: "High-dimensional Learning Dynamics 2024: The Emergence of Structure and Reasoning, 2024."
-    pdf: "https://openreview.net/forum?id=NexAvDkQ4U"
+    pdf: "https://openreview.net/forum?id=NexAvDkQ4U (A version is submitted to ICLR 2025)"
     conference_short: "ICML 2024 - HDLD Workshop"
     image: "./assets/img/xie2024adam.png"
     
