@@ -2,9 +2,9 @@ main:
     
   - title: "Adam Exploits ℓ∞-geometry of Loss Landscape via Coordinate-wise Adaptivity."
     authors: "Shuo Xie, Mohamad Amin Mohamadi, Zhiyuan Li."
-    conference: "High-dimensional Learning Dynamics 2024: The Emergence of Structure and Reasoning, 2024."
+    conference: "The International Conference on Learning Representations, 2025. (Spotlight)"
     pdf: "https://arxiv.org/abs/2410.08198"
-    conference_short: "ICML 2024 - HDLD Workshop"
+    conference_short: "ICLR 2025"
     image: "./assets/img/xie2024adam.png"
     
   - title: "Why Do You Grok? A Theoretical Analysis on Grokking Modular Addition."
@@ -19,7 +19,7 @@ main:
     conference: "International Conference on Machine Learning, 2023."
     pdf: "https://arxiv.org/pdf/2206.12543"
     conference_short: "ICML 2023"
-    image: "./assets/img/mohamadi2022lookahead.png"
+    image: "./assets/img/mohamadi2023pntk.png"
 
   - title: "Making Look-Ahead Active Learning Strategies Feasible with Neural Tangent Kernels."
     authors: "Mohamad Amin Mohamadi, Wonho Bae, Danica J. Sutherland."
@@ -27,4 +27,4 @@ main:
     pdf: "https://arxiv.org/pdf/2206.12569"
     code: "https://github.com/mohamad-amin/ntk-lookahead-active-learning"
     conference_short: "NeurIPS 2022"
-    image: "./assets/img/mohamadi2023pntk.png"
+    image: "./assets/img/mohamadi2022lookahead.png"
