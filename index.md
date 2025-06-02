@@ -6,7 +6,7 @@ layout: homepage
 
 I am a Ph.D. student at Toyota Technological Institute at Chicago ([TTIC](https://ttic.edu/)), where I'm fortunate to be advised by [Zhiyuan Li](https://zhiyuanli.ttic.edu/). I received my Master's degree at the Computer Science department of The University of British Columbia, where I was advised by [Danica J. Sutherland](https://djsutherland.ml/).
 
-I use theoretical and empirical tools to study the practice of Deep Learning. A desire to understand myself led me to this path.
+I use theoretical and empirical tools to study the foundations of Deep Learning, with a current focus on reasoning in Large Language Models. A desire to understand myself led me to this path.
 
 ## News
 
