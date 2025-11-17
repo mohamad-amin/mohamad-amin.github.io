@@ -1,5 +1,12 @@
 main:
-    
+
+  - title: "Honesty over Accuracy: Trustworthy Language Models Through Reinforced Hesitation"
+    authors: "Mohamad Amin Mohamadi, Tianhao Wang, Zhiyuan Li"
+    conference: "ArXiv, 2025."
+    pdf: "https://arxiv.org/abs/2511.11500"
+    conference_short: "ArXiv 2025"
+    image: "./assets/img/mohamadi2025honesty.png"
+
   - title: "Adam Exploits ℓ∞-geometry of Loss Landscape via Coordinate-wise Adaptivity."
     authors: "Shuo Xie, Mohamad Amin Mohamadi, Zhiyuan Li."
     conference: "The International Conference on Learning Representations, 2025. (Spotlight)"
