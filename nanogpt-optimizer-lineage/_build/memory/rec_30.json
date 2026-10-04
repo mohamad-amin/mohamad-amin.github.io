@@ -1,0 +1,45 @@
+{
+  "id": 30,
+  "hidden_x": 7.75,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment in the eigenbasis (exp_avg_sq)",
+      "kind": "second_moment",
+      "x": 0.75,
+      "applies_to": "36 SOAP matrices: 24 MLP (mlp.fc, mlp.proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors row_gg + col_gg",
+      "kind": "preconditioner",
+      "x": 3.0,
+      "applies_to": "24 MLP matrices (3072² + 768² = 4.25× each) + 12 attn.v (768² + 768² = 2× each)",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases q_row + q_col",
+      "kind": "eigenbasis",
+      "x": 3.0,
+      "applies_to": "same 36 matrices (4.25× per MLP matrix, 2× per attn.v)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v (exp_avg, exp_avg_sq) on embedding, LM head and 1-D params",
+  "total_x": 5.01,
+  "notes": "All counted buffers are fp32 and sharded across ranks with their Muon matrices (figures are whole-model); SOAP on the 24 MLP matrices (3072²/768² Gram factors plus eigenbases) is 5.67 of the 7.75. NorMuon-lite second_moment row/column vectors (O(rows+cols), inert at NOR_BETA2=1.0) are ignored, and Aurora and the zero-weight Soft-Muon branch only create per-step temporaries.",
+  "evidence": [
+    "Muon.step L626: state[\"momentum\"] = torch.zeros_like(p) for every Muon param (model.blocks ndim>=2, L823)",
+    "Muon.step L627-630: if p in soap_params (SOAP_PARAM_MODE=\"mlp_plus_v\" L94: mlp.fc, mlp.proj, attn.v) exp_avg_sq = zeros_like(p, fp32), row_gg = zeros(p.size(0), p.size(0)), col_gg = zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner L549-551: state[\"q_row\"], state[\"q_col\"] = soap_eigenbasis(row_gg / col_gg), replaced by soap_basis_qr every 10 steps",
+    "Muon L635-640: state[\"second_moment\"] is (m,1) or (1,n) -> O(rows+cols), not counted",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [ndim<2 params], fused=True) L818-821 -> exp_avg + exp_avg_sq"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "id": 15,
+  "hidden_x": 2.75,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "EMA input covariance cov (_precond_cov, 84 x 768x768 fp32)",
+      "kind": "preconditioner",
+      "x": 0.58,
+      "applies_to": "all 72 hidden matrices via 48 input stats: one 768x768 shared by q/k/v, one each for attn.proj and mlp.fc, 4x768x768 block-diagonal for mlp.proj (x12 blocks)",
+      "when": "always"
+    },
+    {
+      "name": "Damped inverse inv = (cov + ridge)^-1 (_precond_K, 84 x 768x768 fp32)",
+      "kind": "preconditioner",
+      "x": 0.58,
+      "applies_to": "all 72 hidden matrices (same 84 input-side matrices, G <- G @ inv)",
+      "when": "always"
+    },
+    {
+      "name": "x^T x accumulator buffers (qkv_xtx, o_xtx, fc_xtx, proj_xtx; 84 x 768x768 fp32)",
+      "kind": "preconditioner",
+      "x": 0.58,
+      "applies_to": "all 72 hidden matrices (model buffers filled by forward hooks on refresh steps)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 2.39,
+  "notes": "All three 84x768x768 fp32 stacks are replicated on every rank (only the momentum is sharded) and are allocated whether or not the post-compile hooks actually fire. The accumulators hold data only within a refresh step (zeroed after each 64-step refresh); excluding them gives hidden_x 2.17 / total_x 2.09.",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "CausalSelfAttention.__init__: register_buffer(\"qkv_xtx\", zeros(768,768)), register_buffer(\"o_xtx\", zeros(768,768))",
+    "MLP.__init__: register_buffer(\"fc_xtx\", zeros(768,768)), register_buffer(\"proj_xtx\", zeros(4,768,768))",
+    "Muon.attach_preconditioner: self._precond_K = torch.empty(n, d, d) (n=84, d=768) -> s[\"inv\"] views",
+    "Muon.attach_preconditioner: self._precond_cov = torch.empty_like(self._precond_K) -> s[\"cov\"] views",
+    "Muon._refresh_preconditioner: cov.lerp_(K, 0.05); cholesky_ex; cholesky_inverse(L, out=K) (L is a temporary)",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

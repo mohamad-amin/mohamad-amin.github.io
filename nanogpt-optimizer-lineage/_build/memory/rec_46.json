@@ -1,0 +1,71 @@
+{
+  "id": 46,
+  "hidden_x": 12.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq in eigenbasis)",
+      "kind": "second_moment",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors (row_gg, col_gg)",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead buffer (EMA of per-step displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params snapshot",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "Tail EMA of weights (τ=150, fp32, eval-only readout)",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all non-embedding params (all 72 hidden matrices)",
+      "when": "late, from step 2400"
+    }
+  ],
+  "aux_x": 4.5,
+  "aux_note": "AdamW m and v on embedding and LM head, bias-correction-free Adam m and v on 1-D params, plus EMA-Nesterov prev_params and lookahead buffer on all of them; the tail EMA also covers the LM head and 1-D params (≈0.50 of A, embedding excluded)",
+  "total_x": 8.42,
+  "notes": "RowFloor and CWD keep no persistent buffers: the per-row floor factors and the cautious mask 1[U·W>0] are per-step locals, and SOAP's extra lam_row/lam_col vectors (unused, SOAP_KL=0) are O(rows+cols). The fp32 tail EMA (README launch TAILEMA_TAU=150, START 2400) is only blended into a stashed copy for val_ema_loss; the other ~40 env levers (LAWA, schedule-free, PSGD, MUON_SNR and the rest) are off and allocate nothing.",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "should_soap_param: return is_mlp_fc or is_mlp_proj or is_attn_proj or is_qkv (all hidden)",
+    "SOAP params: state[\"exp_avg_sq\"] = torch.zeros_like(p, dtype=torch.float32); state[\"row_gg\"] = torch.zeros(p.size(0), p.size(0)); state[\"col_gg\"] = torch.zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner: q_row/q_col = soap_eigenbasis(...) on first call, then soap_basis_qr every step (SOAP_PRECONDITION_FREQUENCY = 1) replacing q_row, q_col, exp_avg_sq",
+    "EMA_Nesterov.initialize_buffers (all model.parameters()): prev_params = (p.clone(), it); lookahead_buffer = (torch.zeros_like(p), -1)",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], fused=True); optimizer3 = Adam(1-D groups): state[\"exp_avg\"] = zeros_like(p), state[\"exp_avg_sq\"] = zeros_like(p, fp32)",
+    "Muon.step also allocates state[\"lam_row\"] = torch.ones(p.size(0)), state[\"lam_col\"] = torch.ones(p.size(1)) (vectors, read only if SOAP_KL)",
+    "_tailema = [None if p is model.embed.weight else p.detach().float().clone() for p in model.parameters()] when TAILEMA_START <= step+1 < TAILEMA_END, then _tailema[j].add_(p - _tailema[j], alpha=1/TAILEMA_TAU)",
+    "ROWFLOOR branch: r_row, s_row, f_row, u2 are locals; CWD: _cwd_mask = (update.float() * p.float() > 0) local, applied via p.mul_ after rescale_to_radius",
+    "README: run with ROWFLOOR=1 ROWFLOOR_FROB=0 ROWFLOOR_RHO=1.0 CWD=0.025 CWD_POST=1 TAILEMA_TAU=150 TAILEMA_LAMBDA=0.6 (hardcoded in train_gpt_cwd_SOTA.py); log val_ema_loss departs from val_loss at step 2500"
+  ]
+}

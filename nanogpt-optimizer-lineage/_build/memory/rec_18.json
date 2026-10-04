@@ -1,0 +1,38 @@
+{
+  "id": 18,
+  "hidden_x": 8.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "Bilateral covariance sums cov (n x n) and out (m x m)",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices: 2 x 768x768 per attention matrix, 3072x3072 + 768x768 per MLP matrix",
+      "when": "always"
+    },
+    {
+      "name": "Warm-started eigenbases cov_Q (n x n) and out_Q (m x m)",
+      "kind": "eigenbasis",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices: 2 x 768x768 per attention matrix, 3072x3072 + 768x768 per MLP matrix",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 5.14,
+  "notes": "All factors and bases are fp32 and kept per matrix: 5x the matrix size for each attention matrix and 9.5x for each MLP matrix (whose 3072-side factor and basis are 4x the matrix each). C_reg/A_reg and the Q diag(lambda^-0.3) Q^T inverse powers are rebuilt every step and are not stored.",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "Muon.step: state[\"cov\"] = torch.zeros(p.size(1), p.size(1)); state[\"out\"] = torch.zeros(p.size(0), p.size(0)) (dtype=p.dtype, fp32)",
+    "_streaming_cov_power: Q, _ = torch.linalg.qr(C @ Q); state[key] = Q.detach() with key 'cov_Q' (n x n) / 'out_Q' (m x m)",
+    "pmuon_update: cov_buf.mul_(beta).add_(grad.mT @ grad); out_buf.mul_(beta).add_(grad @ grad.mT)",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

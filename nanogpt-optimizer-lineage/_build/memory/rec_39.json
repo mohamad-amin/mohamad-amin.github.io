@@ -1,0 +1,37 @@
+{
+  "id": 39,
+  "hidden_x": 3.0,
+  "components": [
+    {
+      "name": "Muon momentum (mu=0.95)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead_buffer (EMA, gamma=0.99, of each step's parameter displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices here)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params (weights after the previous step)",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices here)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 4.0,
+  "aux_note": "AdamW m and v (2.0) plus EMA-Nesterov lookahead_buffer and prev_params copies (2.0) of the embedding, LM head and 1-D params",
+  "total_x": 3.48,
+  "notes": "The wrapper's two copies are allocated for every parameter at construction (bf16 for the embedding, fp32 elsewhere) and every rank holds them, unlike the rank-sharded Muon momentum. The shift is applied only in steps 500-2399, but the buffers exist the whole run.",
+  "evidence": [
+    "rec_39.py:236-244 EMA_Nesterov.initialize_buffers (called from __init__, :230): param_state['prev_params'] = (p.clone(), it); param_state['lookahead_buffer'] = (torch.zeros_like(p), -1)",
+    "rec_39.py:280-287 accum_lookahead: look = p - prev_params (temporary); buf.lerp_(look, 1 - 0.99); prev_params.copy_(p)",
+    "rec_39.py:395-403 optimizers = [EMA_Nesterov([p for p in model.parameters()], [optimizer1, optimizer2], lookahead_ema=0.99, ...)] covers every parameter",
+    "rec_39.py:208 Muon.step: state[\"momentum\"] = torch.zeros_like(p); :388-391 optimizer1 = AdamW(aux groups, fused=True)"
+  ]
+}

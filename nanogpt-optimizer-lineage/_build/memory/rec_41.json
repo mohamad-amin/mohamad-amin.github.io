@@ -1,0 +1,61 @@
+{
+  "id": 41,
+  "hidden_x": 9.75,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq in eigenbasis)",
+      "kind": "second_moment",
+      "x": 0.75,
+      "applies_to": "36 matrices: 24 MLP (fc, proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors (row_gg, col_gg)",
+      "kind": "preconditioner",
+      "x": 3.0,
+      "applies_to": "36 matrices: 24 MLP (fc, proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 3.0,
+      "applies_to": "36 matrices: 24 MLP (fc, proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead buffer (EMA of per-step displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params snapshot",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 4.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params, plus EMA-Nesterov prev_params and lookahead buffer on all of them",
+  "total_x": 7.01,
+  "notes": "Circuit-Muon's coupled pass runs _ensure_state for all 12 attn.v/attn.proj pairs on every rank, so their momentum and V's SOAP state are replicated per GPU instead of round-robin sharded (more per-GPU memory, same logical count). SOAP state is fp32; the NorMuon-lite per-row/column second_moment vectors (inactive, NOR_BETA2=1.0) are O(rows+cols) and ignored.",
+  "evidence": [
+    "Muon._ensure_state / Muon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "SOAP_PARAM_MODE = \"mlp_plus_v\" -> should_soap_param selects mlp.fc, mlp.proj, attn.v",
+    "SOAP params: state[\"exp_avg_sq\"] = torch.zeros_like(p, dtype=torch.float32); state[\"row_gg\"] = torch.zeros(p.size(0), p.size(0)); state[\"col_gg\"] = torch.zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner: state[\"q_row\"], state[\"q_col\"] = soap_eigenbasis(row_gg / col_gg) on first call, refreshed by soap_basis_qr every 10 steps",
+    "EMA_Nesterov.initialize_buffers (all model.parameters()): prev_params = (p.clone(), it); lookahead_buffer = (torch.zeros_like(p), -1)",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [all ndim<2 params], fused=True) -> exp_avg, exp_avg_sq",
+    "_circuit_muon_step: self._ensure_state(v); self._ensure_state(o) for every (attn.v, attn.proj) pair on each rank"
+  ]
+}

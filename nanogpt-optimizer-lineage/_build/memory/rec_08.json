@@ -1,0 +1,23 @@
+{
+ "id": 8,
+ "hidden_x": 1.0,
+ "components": [
+  {
+   "name": "NorMuonH momentum",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params",
+ "total_x": 1.48,
+ "notes": "NorMuon's second-moment buffer state[\"v\"] is one fp32 value per row (per column for mlp.proj), 110,592 elements in all (≈0.001×H), and is ignored as O(rows+cols). Momentum is fp32 and rank-sharded across GPUs.",
+ "evidence": [
+  "NorMuonH.step: state[\"momentum\"] = torch.zeros_like(p)",
+  "NorMuonH.step: state[\"v\"] = torch.zeros(v_shape) with v_shape [rows, 1] (or [1, cols] for wide mlp.proj): vector, ignored",
+  "optimizer2..5 = NorMuonH(qkv_params | mlp_fc_params | attn_proj_params | mlp_proj_params, lr=0.018): all 72 block matrices",
+  "optimizer1 = AdamW([embed.weight], [proj.weight], [p.ndim < 2], betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

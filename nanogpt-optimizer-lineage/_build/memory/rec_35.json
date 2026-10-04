@@ -1,0 +1,46 @@
+{
+  "id": 35,
+  "hidden_x": 9.0,
+  "components": [
+    {
+      "name": "Shampoo filtered gradient (EMA of grad, beta1=0.9)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "Adam grafting second moment (beta2=0.9)",
+      "kind": "second_moment",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "Kronecker factors L = EMA(GGᵀ), R = EMA(GᵀG) (beta2=0.9), fp32",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices, both sides: 768² + 768² = 2× each attention matrix, 3072² + 768² = 4.25× each MLP matrix",
+      "when": "always"
+    },
+    {
+      "name": "Inverse roots L^-1/4, R^-1/4 (eigh pseudo-inverse with eps=0, refreshed every step), fp32",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices, same shapes as the factors",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 5.66,
+  "notes": "Same allocation as #21 (PseudoInverseConfig, epsilon=0 and precondition_frequency=1 change how the fp32 roots are computed, not what is stored), and with no inverse_exponent_override the vendored library preconditions both sides, so the README's 'One-Sided' label does not reduce memory. Not counted: the DDP all-gather staging buffer (fp32, exactly 1.0×H on every GPU, replicated, absent on 1 GPU), which is communication workspace, and scalars.",
+  "evidence": [
+    "rec_35.py:260-280 DistributedShampoo(72 hidden matrices, betas=(0.9, 0.9), epsilon=0.0, max_preconditioner_dim=8192, precondition_frequency=1, preconditioner_config=RootInvShampooPreconditionerConfig(amortized_computation_config=EigenConfig(rank_deficient_stability_config=PseudoInverseConfig())), grafting_config=AdamPreconditionerConfig(beta2=0.9, epsilon=1e-15), DDP on 8 GPUs per the log)",
+    "results/20260513_shampoo_1_4_power/distributed_shampoo/distributed_shampoo.py:814 _instantiate_filtered_grads: block_state[FILTERED_GRAD] = allocate_zeros_tensor(block.size(), block.dtype) (allocated because betas[0]=0.9 != 0)",
+    "results/20260513_shampoo_1_4_power/distributed_shampoo/preconditioner/adagrad_preconditioner_list.py:95 block_state[ADAGRAD] = allocate_zeros_tensor(block.size(), block.dtype) for the Adam graft",
+    "results/20260513_shampoo_1_4_power/distributed_shampoo/preconditioner/shampoo_preconditioner_list.py:91-98 factor_matrices = zeros((dim, dim), fp32) and :381-388 inv_factor_matrices = eye(dim, fp32), one per dim in preconditioned_dims",
+    "results/20260513_shampoo_1_4_power/distributed_shampoo/preconditioner/shampoo_preconditioner_list.py:1562-1581 the exponent defaults to 1/(2*order) = 1/4 != 0 with no inverse_exponent_override, so both dims are preconditioned; distributor/shampoo_distributor.py:204 multi_dim_split(..., 8192) keeps each matrix as one block",
+    "results/20260513_shampoo_1_4_power/distributed_shampoo/distributor/shampoo_ddp_distributor.py:485 _global_dist_buffer = all-gather staging buffer (communication workspace, not counted)"
+  ]
+}

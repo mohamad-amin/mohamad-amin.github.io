@@ -40,6 +40,8 @@
     r.hp = (r.an && r.an.hparams) || {};
     r.edge = (r.an && r.an.edge) || null;
     r.short = (r.an && r.an.short_name) || plain(r.desc).replace(/\s+/g, " ").slice(0, 26);
+    r.plain = (r.pl && r.pl.plain) || null;
+    r.bullets = (r.pl && r.pl.bullets) || null;
     r.descText = plain(r.desc);
     r.contribText = plain(r.contrib);
   }
@@ -82,6 +84,29 @@
   const techLabel = (id) => (TECHS.get(id) || { label: id.replace(/_/g, " ") }).label;
   const fam = (r) => famById.get(r.family);
   const famVar = (r) => `var(--fam-${r.family})`;
+
+  // ---- optimizer-state memory (multiples of the hidden-matrix parameter count; vectors ignored)
+  const MEM_KINDS = [["momentum", "Momentum"], ["second_moment", "Second moments"], ["preconditioner", "Preconditioner factors"], ["eigenbasis", "Eigenbases"], ["weight_copy", "Weight copies (EMAs, snapshots)"], ["other", "Other"]];
+  const memX = (r) => (r.mem && typeof r.mem.hidden_x === "number" ? r.mem.hidden_x : null);
+  const memCat = (x) => Math.max(0, Math.round(x));
+  const memLevel = (x) => { const c = memCat(x); return c <= 1 ? 1 : c <= 2 ? 2 : c <= 3 ? 3 : c <= 5 ? 4 : c <= 7 ? 5 : 6; };
+  const fmtX = (x) => (x == null ? "–" : (Math.abs(x - Math.round(x)) < 0.05 ? Math.round(x).toFixed(0) : x.toFixed(1)) + "×");
+  const MEM_MAX = Math.max(2, ...RECS.map(memX).filter((x) => x != null));
+  function memKinds(r) {
+    const m = new Map();
+    for (const c of (r.mem && r.mem.components) || []) {
+      const k = MEM_KINDS.some(([id]) => id === c.kind) ? c.kind : "other";
+      m.set(k, (m.get(k) || 0) + (+c.x || 0));
+    }
+    return m;
+  }
+  function memBar(r, max, cls) {
+    if (!r.mem) return "";
+    const by = memKinds(r);
+    const segs = MEM_KINDS.filter(([k]) => by.get(k) > 0.005).map(([k, label]) => `<span class="mseg k-${k}" style="width:${Math.min(100, (by.get(k) / max) * 100)}%" title="${esc(label)}: ${by.get(k).toFixed(2)}×"></span>`).join("");
+    return `<span class="mbar ${cls || ""}" role="img" aria-label="Optimizer memory ${fmtX(memX(r))}">${segs}</span>`;
+  }
+  const memKindsLegend = (kinds) => `<div class="mkinds">${MEM_KINDS.filter(([k]) => !kinds || kinds.has(k)).map(([k, label]) => `<span><i class="k-${k}"></i>${esc(label)}</span>`).join("")}</div>`;
 
   // Colours that must be resolved to hex (text-on-fill contrast for node numbers)
   let famHex = {};
@@ -158,6 +183,7 @@
     if (HAS_D3) { TreeView.sync(opts.focus); TimelineView.sync(); }
     OutlineView.sync(opts.focus);
     GenomeView.sync();
+    MemoryView.sync();
     Inspector.render();
     writeHash();
   }
@@ -181,8 +207,8 @@
     const p = r.parent ? byId.get(r.parent) : null;
     const d = p ? r.steps - p.steps : null;
     return `<div class="tt-h"><span class="mono">#${r.id}</span><span>${esc(r.short)}</span>${r.wr ? '<span class="chip wr">WR</span>' : ""}</div>
-      <div><span class="mono">${r.steps}</span> steps${p ? ` · <span class="mono">${sgn(d)}</span> vs #${p.id}` : ""} · <span class="tt-k">${fmt4(r.mean)} (n=${r.n})</span></div>
-      ${r.edge && r.edge.title ? `<p>${esc(r.edge.title)}</p>` : `<p>${esc(r.descText.slice(0, 160))}</p>`}
+      <div><span class="mono">${r.steps}</span> steps${p ? ` · <span class="mono">${sgn(d)}</span> vs #${p.id}` : ""} · <span class="tt-k">${fmt4(r.mean)} (n=${r.n})</span>${memX(r) != null ? ` · <span class="tt-k">memory ${fmtX(memX(r))}</span>` : ""}</div>
+      <p>${esc(r.plain || (r.edge && r.edge.title) || r.descText.slice(0, 160))}</p>
       <p class="tt-k">${esc(fam(r).label)} · ${esc(r.date)}</p>`;
   }
 
@@ -275,6 +301,10 @@
         const p = r.parent ? byId.get(r.parent) : null;
         return `${r.steps}` + (p ? `  ${sgn(r.steps - p.steps)}` : "  root");
       });
+      const mb = ng.filter((r) => memX(r) != null).append("g").attr("class", (r) => `mem-b m${memLevel(memX(r))}`).attr("transform", `translate(${14 + this.LBL - 4}, 8)`);
+      mb.append("title").text((r) => `Optimizer memory: ${fmtX(memX(r))} per hidden-matrix parameter`);
+      mb.append("rect").attr("x", -36).attr("y", -7.5).attr("width", 36).attr("height", 15).attr("rx", 7.5);
+      mb.append("text").attr("x", -18).attr("y", 0).attr("dy", "0.35em").attr("text-anchor", "middle").text((r) => fmtX(memX(r)));
       this.nodeSel = ng;
       this.truncate();
       try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.truncate()); } catch (e) { /* ignore */ }
@@ -479,6 +509,7 @@
           <span class="ol-name"><b>${esc(r.short)}</b>${col && has ? ` <span class="chip">+${countDesc(id)} hidden</span>` : ""}<span class="ol-title">${esc((r.edge && r.edge.title) || r.descText)}</span></span>
           <span class="ol-bar" title="${r.steps} steps${p ? ` (parent #${p.id}: ${ps})` : ""}"><span class="track"></span>${stem}<span class="pip" style="left:${xs}%;background:${famVar(r)}"></span>${over}</span>
           <span class="ol-steps">${r.steps}<small>${p ? sgn(r.steps - ps) : "root"}</small></span>
+          <span class="ol-mem" title="Optimizer state per hidden-matrix parameter">${memX(r) != null ? `${fmtX(memX(r))}${memBar(r, MEM_MAX, "mini")}` : ""}</span>
         </div>`);
         if (has && !col) {
           const kids = r.children;
@@ -489,7 +520,7 @@
       walk(1, []);
       this.visible = vis;
       $("#view-outline").innerHTML = `<div class="outline" role="tree" aria-label="Record lineage outline">
-        <div class="ol-head" style="--indent:0px"><span></span><span></span><span></span><span></span><span>Record · what it changed vs its parent</span><span style="display:flex;justify-content:space-between"><span>${this.LO}</span><span>steps</span><span>${this.HI}</span></span><span style="text-align:right">Steps</span></div>
+        <div class="ol-head" style="--indent:0px"><span></span><span></span><span></span><span></span><span>Record · what it changed vs its parent</span><span style="display:flex;justify-content:space-between"><span>${this.LO}</span><span>steps</span><span>${this.HI}</span></span><span style="text-align:right">Steps</span><span style="text-align:right">Memory</span></div>
         ${rows.join("")}</div>`;
       this.sync(false);
     },
@@ -692,6 +723,91 @@
         if (col) { const id = +col.dataset.col; if (ev.shiftKey || ev.altKey) setCompare(id); else select(id, { fromClick: true, focus: false }); return; }
         if (ev.target.id === "gm-hit") { const { id } = hit(ev); if (id) { if (ev.shiftKey || ev.altKey) setCompare(id); else select(id, { fromClick: true, focus: false }); } }
       });
+    },
+    sync() { this.render(); },
+  };
+
+  // =====================================================================
+  // Memory view: records grouped by optimizer-state category, plus memory vs steps
+  // =====================================================================
+  const MemoryView = {
+    mode: store.get("memMode", "hidden"),
+    val(r) { return this.mode === "total" ? (r.mem && typeof r.mem.total_x === "number" ? r.mem.total_x : null) : memX(r); },
+    render() {
+      if (state.view !== "memory") return;
+      const host = $("#view-memory");
+      const keep = host.scrollTop;
+      const recs = RECS.filter((r) => this.val(r) != null);
+      if (!recs.length) { host.innerHTML = `<div class="memv"><p class="empty">Memory measurements are not available.</p></div>`; return; }
+      const bins = new Map();
+      for (const r of recs) { const c = memCat(this.val(r)); if (!bins.has(c)) bins.set(c, []); bins.get(c).push(r); }
+      const cats = Array.from(bins.keys()).sort((a, b) => a - b);
+      const allKinds = new Set(); recs.forEach((r) => memKinds(r).forEach((v, k) => { if (v > 0.005) allKinds.add(k); }));
+      const card = (r) => `<button type="button" class="mcard ${r.id === state.sel ? "sel" : ""} ${r.id === state.cmp ? "cmp" : ""} ${lensHas(r) ? "" : "dim"}" data-id="${r.id}">
+          <span class="mc-top"><span class="swatch" style="background:${famVar(r)}"></span><span class="mono">#${r.id}</span>${r.wr ? '<span class="chip wr">WR</span>' : ""}<span class="mc-steps">${r.steps}</span></span>
+          <span class="mc-name">${esc(r.short)}</span>
+          <span class="mc-mem"><b>${fmtX(this.val(r))}</b>${memBar(r, MEM_MAX, "")}</span></button>`;
+      const rows = cats.map((c) => {
+        const rs = bins.get(c).slice().sort((a, b) => a.steps - b.steps || a.id - b.id);
+        const best = rs[0];
+        return `<section class="mrow"><div class="mrow-h"><span class="mcat m${memLevel(c)}">${c}×</span><div class="mrow-sub"><b>${rs.length}</b> record${rs.length === 1 ? "" : "s"}<br>best: #${best.id}, ${best.steps} steps</div></div><div class="mcards">${rs.map(card).join("")}</div></section>`;
+      }).join("");
+      host.innerHTML = `<div class="memv">
+          <div class="memv-top">
+            <p class="memv-intro"><b>Optimizer memory</b> counts the state an approach keeps for each hidden-matrix weight: Muon keeps one momentum buffer (<b>1×</b>), Adam keeps two (<b>2×</b>), Kronecker methods such as SOAP or Shampoo add factor and eigenbasis matrices, and wrappers add weight copies. Row or column statistics are ignored. Records are grouped by the rounded multiple.</p>
+            <div class="seg" id="mem-mode" role="group" aria-label="What to count"><button type="button" data-mode="hidden" aria-pressed="${this.mode === "hidden"}">Per hidden weight</button><button type="button" data-mode="total" aria-pressed="${this.mode === "total"}">Whole model</button></div>
+          </div>
+          ${memKindsLegend(allKinds)}
+          <div class="memv-chart" id="mem-chart"></div>
+          ${rows}</div>`;
+      this.chart(recs);
+      host.scrollTop = keep;
+      host.querySelector("#mem-mode").addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-mode]"); if (!b) return;
+        this.mode = b.dataset.mode; store.set("memMode", this.mode); this.render();
+      });
+      host.onclick = (e) => {
+        const c = e.target.closest(".mcard"); if (!c) return;
+        const id = +c.dataset.id;
+        if (e.shiftKey || e.altKey) setCompare(id); else select(id, { fromClick: true, focus: false });
+      };
+    },
+    chart(recs) {
+      const el = $("#mem-chart");
+      const W = Math.max(520, el.clientWidth - 28), H = 300, m = { l: 56, r: 24, t: 30, b: 40 };
+      const HI = 3700, LO = 2650, outY = H - m.b - 14;
+      const xmax = Math.ceil(Math.max(...recs.map((r) => this.val(r)))) + 0.5;
+      const X = (v) => m.l + (v / xmax) * (W - m.l - m.r);
+      const Y = (s) => (s > HI ? outY : m.t + ((s - LO) / (HI - LO)) * (outY - 28 - m.t));
+      let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Steps to 3.28 against optimizer memory">`;
+      s += `<rect class="tl-band" x="${m.l}" y="${outY - 12}" width="${W - m.l - m.r}" height="24" rx="5"/>`;
+      for (let t = 2700; t <= HI; t += 100) s += `<line class="gridl" x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}"/><text class="axl" x="${m.l - 8}" y="${Y(t)}" dy="0.32em" text-anchor="end">${t}</text>`;
+      s += `<text class="axl" x="${m.l - 8}" y="${outY}" dy="0.32em" text-anchor="end">&gt;3700</text>`;
+      for (let t = 0; t <= Math.floor(xmax); t++) s += `<line class="gridl" x1="${X(t)}" x2="${X(t)}" y1="${m.t}" y2="${outY + 12}"/><text class="axl" x="${X(t)}" y="${H - m.b + 22}" text-anchor="middle">${t}×</text>`;
+      s += `<text class="axt" x="${m.l}" y="16">Steps to 3.28 (better is higher) against optimizer memory (${this.mode === "total" ? "whole model" : "per hidden weight"})</text>`;
+      // frontier: best steps achievable with at most this much memory
+      const sorted = recs.slice().sort((a, b) => this.val(a) - this.val(b) || a.steps - b.steps);
+      const pts = []; let best = Infinity;
+      for (const r of sorted) if (r.steps < best) { if (pts.length) pts.push([X(this.val(r)), Y(best)]); best = r.steps; pts.push([X(this.val(r)), Y(best)]); }
+      pts.push([W - m.r, Y(best)]);
+      s += `<path class="mv-front" d="M${pts.map((p) => p.join(",")).join("L")}"/>`;
+      const frontIds = new Set(); best = Infinity;
+      for (const r of sorted) if (r.steps < best) { best = r.steps; frontIds.add(r.id); }
+      const offLbl = new Map(); let lastX = -1e9, lift = 0;
+      for (const r of recs.filter((q) => q.steps > HI).sort((a, b) => X(this.val(a)) - X(this.val(b)))) {
+        const x = X(this.val(r)); lift = x - lastX < 78 ? lift + 1 : 0; lastX = x; offLbl.set(r.id, lift);
+      }
+      for (const r of recs) {
+        const x = X(this.val(r)), y = Y(r.steps);
+        const cls = ["mv-pt", r.id === state.sel ? "sel" : "", r.id === state.cmp ? "cmp" : "", lensHas(r) ? "" : "dim"].join(" ");
+        s += `<g class="${cls}" data-id="${r.id}" transform="translate(${x},${y})"><circle r="12" fill="transparent"/>${r.wr ? '<circle class="wr-ring" r="9.5"/>' : ""}<circle class="dot" r="6.5" style="fill:${famVar(r)}"/>${r.steps > HI ? `<text x="9" y="${-8 - 12 * offLbl.get(r.id)}">#${r.id} · ${r.steps}</text>` : frontIds.has(r.id) || r.id === state.sel ? `<text x="10" y="-8">#${r.id}</text>` : ""}</g>`;
+      }
+      s += `</svg>`;
+      el.innerHTML = `<div class="mv-key"><span><i class="front"></i>best steps reachable with at most this much memory</span></div>${s}`;
+      const svg = el.querySelector("svg");
+      svg.addEventListener("mousemove", (e) => { const g = e.target.closest(".mv-pt"); if (g) showTip(recTip(byId.get(+g.dataset.id)), e); else hideTip(); });
+      svg.addEventListener("mouseleave", hideTip);
+      svg.addEventListener("click", (e) => { const g = e.target.closest(".mv-pt"); if (!g) return; const id = +g.dataset.id; if (e.shiftKey || e.altKey) setCompare(id); else select(id, { fromClick: true, focus: false }); });
     },
     sync() { this.render(); },
   };
@@ -1336,10 +1452,38 @@
   }
 
   // =====================================================================
-  // Inspector
+  // Inspector (side panel): tabs, plain-language overview first, details on demand
   // =====================================================================
+  const TABS_REC = [["overview", "Overview"], ["changes", "Changes"], ["memory", "Memory"], ["curves", "Curves"], ["techniques", "Techniques"], ["settings", "Settings"], ["docs", "Docs"]];
+  const TABS_CMP = [["overview", "Overview"], ["diff", "Differences"], ["curves", "Curves"], ["code", "Code"]];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const fmtDate = (s) => { const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(s || ""); return m ? `${MONTHS[+m[2] - 1]} ${+m[3]}, ${m[1]}` : esc(s); };
+  // code-like tokens inside prose (snake_case names, calls, module paths) get a quiet code style
+  const CODE_TOK = /(?<![\p{L}\p{N}_])(?:_?[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+|_[A-Za-z0-9_]+|[A-Za-z_][\w.]*\(\)|(?:attn|mlp|embed|model|proj|blocks)\.[A-Za-z_][\w.]*)(?![\p{L}\p{N}_])/gu;
+  function prose(text) {
+    const s = String(text == null ? "" : text);
+    let out = "", last = 0, m;
+    CODE_TOK.lastIndex = 0;
+    while ((m = CODE_TOK.exec(s))) { out += esc(s.slice(last, m.index)) + `<code class="tok">${esc(m[0])}</code>`; last = m.index + m[0].length; }
+    return out + esc(s.slice(last));
+  }
+  function sentences(text) {
+    const parts = String(text || "").trim().split(/(?<=[.!?])\s+(?=[A-Z(#"“0-9])/);
+    const out = [];
+    for (const p of parts) {
+      if (out.length && /\b(?:e\.g|i\.e|vs|approx|etc|cf|al|no)\.$/i.test(out[out.length - 1])) out[out.length - 1] += " " + p;
+      else if (p) out.push(p);
+    }
+    return out;
+  }
+  const typeName = { added: "Added", removed: "Removed", modified: "Changed", tuned: "Retuned", refactor: "Refactor" };
+  const tabsHTML = (tabs, cur) => `<nav class="itabs" role="tablist" aria-label="Record details">${tabs.map(([id, label]) => `<button type="button" role="tab" data-act="tab" data-tab="${id}" aria-selected="${id === cur}">${label}</button>`).join("")}</nav>`;
+  const recBtn = (r, extra) => `<button type="button" class="rec-link" data-act="go" data-id="${r.id}"><span class="swatch" style="background:${famVar(r)}"></span><span class="mono">#${r.id}</span><span class="rl-name">${esc(r.short)}</span>${extra ? `<small>${extra}</small>` : ""}</button>`;
+
   const Inspector = {
     curveMode: store.get("curveMode", "tail"),
+    tabRec: store.get("tabRec", "overview"),
+    tabCmp: store.get("tabCmp", "overview"),
     init() {
       const el = $("#inspector");
       el.addEventListener("click", (e) => {
@@ -1358,193 +1502,286 @@
         else if (act === "lens") setLens({ type: "tech", id: t.dataset.tech });
         else if (act === "curve") { this.curveMode = t.dataset.mode; store.set("curveMode", this.curveMode); this.render(); }
         else if (act === "hp-all") { this.hpAll = !this.hpAll; this.render(); }
+        else if (act === "tab") {
+          if (state.cmp) { this.tabCmp = t.dataset.tab; store.set("tabCmp", this.tabCmp); }
+          else { this.tabRec = t.dataset.tab; store.set("tabRec", this.tabRec); }
+          this.render(true);
+          const b = $(`.itabs [data-tab="${t.dataset.tab}"]`); if (b) b.focus();
+        }
+      });
+      el.addEventListener("keydown", (e) => {
+        const t = e.target.closest(".itabs [data-tab]");
+        if (!t || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
+        const all = $$(".itabs [data-tab]");
+        const i = all.indexOf(t) + (e.key === "ArrowRight" ? 1 : -1);
+        if (all[i]) { all[i].click(); e.preventDefault(); e.stopPropagation(); }
       });
     },
-    render() {
+    render(tabChanged) {
       const el = $("#inspector");
       const keep = el.scrollTop;
-      const sameView = this.lastKey === `${state.sel}|${state.cmp}`;
-      this.lastKey = `${state.sel}|${state.cmp}`;
+      const key = `${state.sel}|${state.cmp}`;
+      const sameView = this.lastKey === key && !tabChanged;
+      this.lastKey = key;
       if (state.cmp) this.renderCompare(byId.get(state.sel), byId.get(state.cmp));
       else this.renderRecord(byId.get(state.sel));
       el.scrollTop = sameView ? keep : 0;
     },
-    head(r, extra) {
+    navButtons(r) {
       const p = r.parent ? byId.get(r.parent) : null;
-      const links = [];
-      if (r.pr) links.push(`<a href="https://github.com/KellerJordan/modded-nanogpt/pull/${r.pr}" target="_blank" rel="noopener">PR #${r.pr}</a>`);
-      links.push(`<a href="${esc(r.log)}" target="_blank" rel="noopener">log</a>`);
-      if (r.folder) links.push(`<a href="${esc(r.folder)}" target="_blank" rel="noopener">files</a>`);
-      return `<div class="insp-head">
-        <div class="ih-top"><span class="ih-num">#${r.id}</span>${r.wr ? `<span class="chip wr" title="New world record when accepted">WR</span>` : ""}<span class="chip"><span class="swatch" style="background:${famVar(r)}"></span>${esc(fam(r).label)}</span>${!r.valid ? `<span class="chip warn" title="Submitted before the significance rule; n=1">pre-rules</span>` : ""}
-          <div class="ih-nav">
-            <button type="button" class="nav-btn" data-act="parent" ${p ? "" : "disabled"} title="Parent (←)">← ${p ? "#" + p.id : "root"}</button>
-            <button type="button" class="nav-btn" data-act="child" ${r.children.length ? "" : "disabled"} title="Child on the way to the best descendant (→)">${r.children.length ? "#" + bestChild(r) : "leaf"} →</button>
-          </div>
-        </div>
-        <div class="ih-name">${esc(r.short)}</div>
-        <div class="ih-meta">${esc(r.date)} · ${r.contrib} · ${links.join(" · ")}</div>
-        ${extra || ""}
+      const c = bestChild(r);
+      return `<div class="ih-nav">
+        <button type="button" class="nav-btn" data-act="parent" ${p ? "" : "disabled"} title="Go to the parent (←)" aria-label="Go to the parent">← ${p ? "#" + p.id : ""}</button>
+        <button type="button" class="nav-btn" data-act="child" ${c ? "" : "disabled"} title="Go to the child on the way to the best descendant (→)" aria-label="Go to a child">${c ? "#" + c : ""} →</button>
       </div>`;
     },
     renderRecord(r) {
       const p = r.parent ? byId.get(r.parent) : null;
       const an = r.an || {};
+      const tabs = TABS_REC.filter(([id]) => (id !== "docs" || r.docs.length || (an.caveats && an.caveats.trim())) && (id !== "memory" || r.mem));
+      const tab = tabs.some(([id]) => id === this.tabRec) ? this.tabRec : "overview";
+      const links = [];
+      if (r.pr) links.push(`<a href="https://github.com/KellerJordan/modded-nanogpt/pull/${r.pr}" target="_blank" rel="noopener">PR #${r.pr}</a>`);
+      links.push(`<a href="${esc(r.log)}" target="_blank" rel="noopener">Log</a>`);
+      if (r.folder) links.push(`<a href="${esc(r.folder)}" target="_blank" rel="noopener">Files</a>`);
+      const who = r.contrib.replace(/^<a[^>]*>PR<\/a>\s*by\s*/i, "");
+      const head = `<header class="insp-head">
+        <div class="ih-top">
+          <div class="ih-title">
+            <div class="ih-kicker"><span class="ih-num">#${r.id}</span>${r.wr ? `<span class="chip wr" title="New world record when it was accepted">World record</span>` : ""}<span class="chip"><span class="swatch" style="background:${famVar(r)}"></span>${esc(fam(r).label)}</span>${!r.valid ? `<span class="chip warn" title="Submitted before the significance rule, single run">Pre-rules</span>` : ""}</div>
+            <h2 class="ih-name">${esc(r.short)}</h2>
+            <div class="ih-meta">${fmtDate(r.date)} · ${who}<span class="ih-links">${links.join("")}</span></div>
+          </div>
+          ${this.navButtons(r)}
+        </div>
+        ${tabsHTML(tabs, tab)}
+      </header>`;
+      const body = tab === "changes" ? this.recChanges(r, p) : tab === "memory" ? this.recMemory(r, p) : tab === "curves" ? this.recCurves(r, p) : tab === "techniques" ? this.recTechniques(r, p)
+        : tab === "settings" ? this.recSettings(r, p) : tab === "docs" ? this.recDocs(r, p) : this.recOverview(r, p);
+      $("#inspector").innerHTML = `<div class="insp">${head}<div class="insp-body" role="tabpanel">${body}</div></div>`;
+      if (tab === "curves") mountCurve($("#curve-host"), p ? [{ rec: p, color: "var(--muted)", ref: true }, { rec: r, color: famVar(r) }] : [{ rec: r, color: famVar(r) }], this.curveMode);
+    },
+    techChips(edge) {
+      const ta = edge.techniques_added || [], tr = edge.techniques_removed || [], tm = edge.techniques_modified || [];
+      if (!(ta.length + tr.length + tm.length)) return "";
+      const chip = (t, cls, sg, title) => `<button type="button" class="chip ${cls}" data-act="lens" data-tech="${esc(t)}" title="${title} — click to highlight it on the tree"><span class="sg">${sg}</span>${esc(techLabel(t))}</button>`;
+      return `<div class="chips">${ta.map((t) => chip(t, "add", "+", "Added")).join("")}${tr.map((t) => chip(t, "del", MINUS, "Removed")).join("")}${tm.map((t) => chip(t, "mod", "~", "Changed")).join("")}</div>`;
+    },
+    recOverview(r, p) {
       const edge = r.edge || {};
-      const mg = margin(r);
-      const parts = [];
-      parts.push(this.head(r, `<div class="chips" style="margin:10px 0 0">
-          ${p ? `<button type="button" class="nav-btn primary" data-act="diff" data-a="${p.id}" data-b="${r.id}">Code diff vs #${p.id}</button>
-          <button type="button" class="nav-btn" data-act="cmp-parent">Compare with #${p.id}</button>` : ""}
-          <button type="button" class="nav-btn" data-act="pick">Compare with…</button></div>`));
-      // ---- tiles
+      const plain = r.plain || sentences(edge.summary)[0] || r.descText;
+      const bullets = r.bullets && r.bullets.length ? r.bullets : (edge.changes || []).filter((c) => c.type !== "refactor").slice(0, 4).map((c) => c.label);
       const dS = p ? r.steps - p.steps : null;
-      const comp = r.comp && r.comp.mean != null && (Math.abs(r.comp.mean - r.mean) > 6e-5 || r.comp.n !== r.n) ? `<div class="t-d" title="Recomputed from the logs in the repository">logs: ${r.comp.mean.toFixed(4)} (n=${r.comp.n})</div>` : "";
-      parts.push(`<section class="sec"><p class="desc" style="margin:0 0 12px">${r.desc}</p><div class="tiles">
-        <div class="tile"><div class="t-l">Steps to 3.28</div><div class="t-v">${r.steps}</div><div class="t-d">${p ? `<span class="${dS < 0 ? "delta-good" : dS > 0 ? "delta-bad" : ""}">${sgn(dS)}</span> vs #${p.id}` : "baseline"}${r.sched !== r.steps ? ` · schedule ${r.sched}` : ""}</div></div>
-        <div class="tile"><div class="t-l">Mean val loss</div><div class="t-v">${fmt4(r.mean)}</div><div class="t-d">n = ${r.n} run${r.n === 1 ? "" : "s"}</div>${comp}</div>
-        <div class="tile" title="(3.28 − mean)·√n must be at least 0.004"><div class="t-l">Validity margin</div><div class="t-v">${mg.toFixed(4)}</div><div class="t-d">${mg >= NEED ? "passes ≥ 0.004" : "below 0.004"}</div><div class="meter"><i class="${mg >= NEED ? "ok" : ""}" style="width:${Math.max(0, Math.min(100, mg / 0.012 * 100))}%"></i><b style="left:${NEED / 0.012 * 100}%"></b></div></div>
-      </div></section>`);
-      // ---- lineage
-      const path = pathFromRoot(r.id);
+      const mg = margin(r);
+      const comp = r.comp && r.comp.mean != null && (Math.abs(r.comp.mean - r.mean) > 6e-5 || r.comp.n !== r.n) ? ` · logs give ${r.comp.mean.toFixed(4)} over ${r.comp.n}` : "";
+      let h = `<section class="blk"><p class="lede">${prose(plain)}</p></section>`;
+      h += `<section class="blk"><div class="tiles">
+          <div class="tile"><div class="t-l">Steps to 3.28</div><div class="t-v">${r.steps}</div><div class="t-d">${p ? `<span class="${dS < 0 ? "delta-good" : dS > 0 ? "delta-bad" : ""}">${sgn(dS)}</span> vs #${p.id}` : "the starting point"}</div></div>
+          <div class="tile"><div class="t-l">Mean val loss</div><div class="t-v">${fmt4(r.mean)}</div><div class="t-d">over ${r.n} run${r.n === 1 ? "" : "s"}${comp}</div></div>
+          ${memX(r) != null ? `<button type="button" class="tile tile-btn" data-act="tab" data-tab="memory" title="Optimizer state kept per hidden-matrix parameter; click for the breakdown"><div class="t-l">Optimizer memory</div><div class="t-v">${fmtX(memX(r))}</div><div class="t-d">per hidden weight${p && memX(p) != null && Math.abs(memX(r) - memX(p)) >= 0.05 ? ` · <span class="${memX(r) > memX(p) ? "delta-bad" : "delta-good"}">${memX(r) > memX(p) ? "+" : MINUS}${fmtX(Math.abs(memX(r) - memX(p)))}</span> vs #${p.id}` : ""}</div>${memBar(r, MEM_MAX, "tile-bar")}</button>` : ""}
+          <div class="tile" title="(3.28 − mean) × √n must be at least 0.004"><div class="t-l">Passes the bar?</div><div class="t-v">${mg >= NEED ? "Yes" : "No"}</div><div class="t-d">margin ${mg.toFixed(4)} (needs 0.004)</div><div class="meter"><i class="${mg >= NEED ? "ok" : ""}" style="width:${Math.max(0, Math.min(100, mg / 0.012 * 100))}%"></i><b style="left:${NEED / 0.012 * 100}%"></b></div></div>
+        </div>${r.sched !== r.steps ? `<p class="fine">The run was scheduled for ${r.sched} steps; the result is read at step ${r.steps}, the earliest eval that clears the bar.</p>` : ""}</section>`;
+      if (p) {
+        const eg = effGain(r, p), pw = pairwise(r, p);
+        const dl = r.mean - p.mean;
+        h += `<section class="blk"><div class="verdict">
+            <div class="vnum ${eg >= 0 ? "pos" : "neg"}">${eg >= 0 ? "+" : MINUS}${Math.abs(eg).toFixed(0)}</div>
+            <div class="vtxt">effective steps ${eg >= 0 ? "better" : "worse"} than its parent ${recBtn(p)}</div>
+            <div class="vsub">It ${dS <= 0 ? `saves ${-dS} step${dS === -1 ? "" : "s"}` : `needs ${dS} more step${dS === 1 ? "" : "s"}`} and ends ${Math.abs(dl) < 5e-5 ? "at the same loss" : `${Math.abs(dl).toFixed(4)} ${dl < 0 ? "lower" : "higher"} in loss`}; at 0.0045 loss per 100 steps that totals ${Math.abs(eg).toFixed(0)} steps.
+              <span class="pill ${pw >= NEED ? "ok" : "no"}">${pw >= NEED ? "✓ Statistically clear" : "Not yet statistically clear"}</span></div>
+          </div></section>`;
+      }
+      h += `<section class="blk"><div class="blk-h"><h3>${p ? `What changed from #${p.id}` : "What the baseline does"}</h3></div>
+          <ul class="bul">${bullets.map((b) => `<li>${prose(b)}</li>`).join("")}</ul>
+          ${this.techChips(edge)}
+          <div class="actions">
+            ${p ? `<button type="button" class="nav-btn" data-act="tab" data-tab="changes">Read the details</button><button type="button" class="nav-btn primary" data-act="diff" data-a="${p.id}" data-b="${r.id}">Code diff vs #${p.id}</button>` : `<button type="button" class="nav-btn" data-act="tab" data-tab="changes">Read the details</button>`}
+          </div></section>`;
       const kids = r.children.map((c) => byId.get(c));
       const bigGap = r.nearest && p && r.nearest !== p.id && r.dParent - r.dNearest >= 40 && r.dParent >= 1.4 * r.dNearest;
-      const nearestNote = bigGap ? `<div class="note" style="margin-top:10px">The script is textually closest to <button type="button" class="rec-link" data-act="go" data-id="${r.nearest}"><span class="mono">#${r.nearest}</span>${esc(byId.get(r.nearest).short)}</button> (${r.dNearest} changed lines vs ${r.dParent} against #${p.id}), ${r.how === "declared" ? `even though the README builds it on #${p.id}` : `but chronology and settings point to #${p.id}`}. <button type="button" class="sym" data-act="diff" data-a="${r.nearest}" data-b="${r.id}">diff vs #${r.nearest}</button></div>` : "";
-      parts.push(`<section class="sec"><div class="sec-h"><h3>Lineage</h3><span class="aside">depth ${r.depth}</span></div>
-        <div class="path">${path.map((id, i) => `${i ? '<span class="sep">›</span>' : ""}<button type="button" class="pnode ${id === r.id ? "cur" : ""}" data-act="go" data-id="${id}"><span class="swatch" style="background:${famVar(byId.get(id))}"></span>${id}</button>`).join("")}</div>
-        <div class="kin">
-          <div class="kin-row"><span>Parent</span><div class="kin-list">${p ? `<button type="button" class="rec-link" data-act="go" data-id="${p.id}"><span class="mono">#${p.id}</span>${esc(p.short)} <small>${p.steps}</small></button><span class="desc" style="font-size:12px">${r.how === "declared" ? "declared in the README" : "inferred from code and chronology"}</span>` : `<span class="desc">none (this is the original baseline)</span>`}</div></div>
-          <div class="kin-row"><span>Children</span><div class="kin-list">${kids.length ? kids.map((k) => `<button type="button" class="rec-link" data-act="go" data-id="${k.id}"><span class="mono">#${k.id}</span>${esc(k.short)} <small>${sgn(k.steps - r.steps)}</small></button>`).join("") : `<span class="desc">none yet</span>`}</div></div>
-          ${r.infl && r.infl.length ? `<div class="kin-row"><span>Borrows from</span><div class="kin-list">${r.infl.map((i) => `<button type="button" class="rec-link" data-act="go" data-id="${i}"><span class="mono">#${i}</span>${esc(byId.get(i).short)}</button>`).join("")}</div></div>` : ""}
-        </div>${nearestNote}</section>`);
-      // ---- what changed
+      h += `<section class="blk"><div class="blk-h"><h3>Family tree</h3><span class="aside">generation ${r.depth}</span></div>
+          <div class="kin">
+            <div class="kin-row"><span>Parent</span><div class="kin-list">${p ? `${recBtn(p, p.steps)}<span class="kin-note">${r.how === "declared" ? "as stated in the README" : "inferred from the code and dates"}</span>` : `<span class="kin-note">none, this is the original baseline</span>`}</div></div>
+            <div class="kin-row"><span>Children</span><div class="kin-list">${kids.length ? kids.map((k) => recBtn(k, sgn(k.steps - r.steps))).join("") : `<span class="kin-note">none yet</span>`}</div></div>
+            ${r.infl && r.infl.length ? `<div class="kin-row"><span>Borrows from</span><div class="kin-list">${r.infl.map((i) => recBtn(byId.get(i))).join("")}</div></div>` : ""}
+          </div>
+          ${bigGap ? `<p class="fine">Its code is closest to ${recBtn(byId.get(r.nearest))} (${r.dNearest} lines differ, versus ${r.dParent} against #${p.id}). <button type="button" class="linkish" data-act="diff" data-a="${r.nearest}" data-b="${r.id}">Diff against #${r.nearest}</button></p>` : ""}
+          <div class="actions">${p ? `<button type="button" class="nav-btn" data-act="cmp-parent">Compare with #${p.id}</button>` : ""}<button type="button" class="nav-btn" data-act="pick">Compare with another record…</button></div>
+        </section>`;
+      return h;
+    },
+    recChanges(r, p) {
+      const edge = r.edge || {};
+      let h = `<section class="blk">${edge.title ? `<h3 class="big">${prose(edge.title)}</h3>` : ""}
+          ${edge.summary ? `<ul class="bul">${sentences(edge.summary).map((s) => `<li>${prose(s)}</li>`).join("")}</ul>` : `<p class="fine">No curated summary for this record; the code diff shows every change.</p>`}
+          ${this.techChips(edge)}</section>`;
+      const changes = (edge.changes || []);
+      if (changes.length) {
+        h += `<section class="blk"><div class="blk-h"><h3>${p ? "Each change" : "Components"}</h3><span class="aside">${changes.length}</span></div><div class="cards">${changes.map((c) => {
+          const syms = (c.symbols || []).filter(Boolean);
+          const k = p && syms.length ? symKey(r, syms[0]) : "";
+          return `<article class="card"><div class="card-h"><span class="type ${esc(c.type)}">${esc(typeName[c.type] || c.type)}</span><b>${prose(c.label)}</b></div>
+            ${c.detail ? `<p>${prose(c.detail)}</p>` : ""}
+            ${p && syms.length ? `<button type="button" class="codelink" data-act="diff" data-a="${p.id}" data-b="${r.id}" data-key="${esc(k)}">View in the code <span>${syms.slice(0, 3).map((s) => `<code class="tok">${esc(s)}</code>`).join(" ")}${syms.length > 3 ? ` +${syms.length - 3}` : ""}</span></button>` : ""}</article>`;
+        }).join("")}</div></section>`;
+      }
+      if (p && edge.hparams_changed && edge.hparams_changed.length) {
+        h += `<section class="blk"><div class="blk-h"><h3>Settings that changed</h3></div><div class="kv-wrap"><table class="kv"><thead><tr><th>Setting</th><th>#${p.id}</th><th>#${r.id}</th></tr></thead><tbody>${edge.hparams_changed.map((x) => `<tr><td class="k">${esc(x.label || hpLabel(x.key || ""))}</td><td class="v old">${esc(x.from == null ? "–" : x.from)}</td><td class="v new">${esc(x.to == null ? "–" : x.to)}</td></tr>`).join("")}</tbody></table></div></section>`;
+      }
+      if (p && edge.parent_check && !/^consistent\.?$/i.test(edge.parent_check.trim())) {
+        h += `<section class="blk"><div class="blk-h"><h3>About the parent</h3></div><p class="prose-p">${prose(edge.parent_check)}</p></section>`;
+      }
       if (p) {
-        const pw = pairwise(r, p), eg = effGain(r, p);
-        const ta = edge.techniques_added || [], tr = edge.techniques_removed || [], tm = edge.techniques_modified || [];
         const fp = blockDiff(p, r, true);
         const changed = fp.entries.filter((e) => e.status && e.status !== "same");
-        parts.push(`<section class="sec"><div class="sec-h"><h3>What changed vs #${p.id}</h3><span class="aside">${esc(p.short)}</span></div>
-          ${edge.title ? `<p class="chg-title">${esc(edge.title)}</p>` : ""}
-          ${edge.summary ? `<p class="lede">${esc(edge.summary)}</p>` : `<p class="empty">No curated summary for this edge; see the code diff below.</p>`}
-          ${ta.length + tr.length + tm.length ? `<div class="chips">${ta.map((t) => `<button type="button" class="chip add" data-act="lens" data-tech="${esc(t)}"><span class="sg">+</span>${esc(techLabel(t))}</button>`).join("")}${tr.map((t) => `<button type="button" class="chip del" data-act="lens" data-tech="${esc(t)}"><span class="sg">${MINUS}</span>${esc(techLabel(t))}</button>`).join("")}${tm.map((t) => `<button type="button" class="chip mod" data-act="lens" data-tech="${esc(t)}"><span class="sg">~</span>${esc(techLabel(t))}</button>`).join("")}</div>` : ""}
-          <div class="note" style="margin:10px 0">
-            <b>${eg >= 0 ? "+" : MINUS}${Math.abs(eg).toFixed(0)} effective steps</b> vs #${p.id} (${sgn(p.steps - r.steps)} steps saved, loss ${sgn((r.mean - p.mean) * 1e4, 1)}e-4).
-            Pairwise score ${pw.toFixed(4)} ${pw >= NEED ? "reaches" : "is below"} the 0.004 bar, so the logs ${pw >= NEED ? "<b>do</b> show" : "do not yet show"} a significant improvement over the parent.
-          </div>
-          ${edge.changes && edge.changes.length ? `<ul class="chg-list">${edge.changes.map((c) => `<li class="chg"><span class="ct t-${esc(c.type)}">${esc(c.type)}</span><div><b>${esc(c.label)}</b> ${c.detail ? `<span class="desc">${esc(c.detail)}</span>` : ""}${c.symbols && c.symbols.length ? `<div class="syms">${c.symbols.map((s) => `<button type="button" class="sym" data-act="diff" data-a="${p.id}" data-b="${r.id}" data-key="${esc(symKey(r, s))}">${esc(s)}</button>`).join("")}</div>` : ""}</div></li>`).join("")}</ul>` : ""}
-          ${edge.hparams_changed && edge.hparams_changed.length ? `<div class="kv-wrap" style="margin-top:12px"><table class="kv"><thead><tr><th>Hyperparameter</th><th>#${p.id}</th><th>#${r.id}</th></tr></thead><tbody>${edge.hparams_changed.map((h) => `<tr><td class="k">${esc(h.label || hpLabel(h.key || ""))}${h.key ? `<small>${esc(h.key)}</small>` : ""}</td><td class="v">${esc(h.from == null ? "–" : h.from)}</td><td class="v">${esc(h.to == null ? "–" : h.to)}</td></tr>`).join("")}</tbody></table></div>` : ""}
-          ${edge.parent_check && !/^consistent\.?$/i.test(edge.parent_check.trim()) ? `<div class="note" style="margin-top:10px"><b>About the parent:</b> ${esc(edge.parent_check)}</div>` : ""}
-          <div class="sec-h" style="margin-top:16px"><h3>Code footprint</h3><span class="aside">comments ignored</span></div>
-          <div class="fp-sum"><span><span class="a">+${fp.add}</span> <span class="d">${MINUS}${fp.del}</span> code lines</span><span>${changed.length} block${changed.length === 1 ? "" : "s"} touched</span>${edge.noise ? `<span title="${esc(edge.noise)}">· refactor noise noted</span>` : ""}</div>
-          <div class="footprint">${changed.slice(0, 14).map((e) => `<button type="button" class="fp-row" data-act="diff" data-a="${p.id}" data-b="${r.id}" data-key="${esc(e.key)}"><span class="fp-ic">${kindIcon(e.kind)}</span><span class="fp-name">${entryLabel(e)}</span><span class="fp-stat">${entryStat(e)}</span></button>`).join("")}${changed.length > 14 ? `<button type="button" class="fp-row" data-act="diff" data-a="${p.id}" data-b="${r.id}"><span></span><span class="fp-name">+ ${changed.length - 14} more blocks…</span><span></span></button>` : ""}</div>
-          ${edge.noise ? `<p class="desc" style="margin-top:8px"><b>Can be ignored:</b> ${esc(edge.noise)}</p>` : ""}
-        </section>`);
-      } else {
-        parts.push(`<section class="sec"><div class="sec-h"><h3>The baseline</h3></div>${edge.title ? `<p class="chg-title">${esc(edge.title)}</p>` : ""}${edge.summary ? `<p class="lede">${esc(edge.summary)}</p>` : ""}
-          ${edge.changes && edge.changes.length ? `<ul class="chg-list">${edge.changes.map((c) => `<li class="chg"><span class="ct">${esc(c.type)}</span><div><b>${esc(c.label)}</b> <span class="desc">${esc(c.detail || "")}</span></div></li>`).join("")}</ul>` : ""}</section>`);
+        h += `<section class="blk"><div class="blk-h"><h3>Where the code changed</h3><span class="aside"><span class="a">+${fp.add}</span> <span class="d">${MINUS}${fp.del}</span> lines · comments ignored</span></div>
+          <div class="footprint">${changed.slice(0, 16).map((e) => `<button type="button" class="fp-row" data-act="diff" data-a="${p.id}" data-b="${r.id}" data-key="${esc(e.key)}"><span class="fp-ic">${kindIcon(e.kind)}</span><span class="fp-name">${entryLabel(e)}</span><span class="fp-stat">${entryStat(e)}</span></button>`).join("")}${changed.length > 16 ? `<button type="button" class="fp-row" data-act="diff" data-a="${p.id}" data-b="${r.id}"><span></span><span class="fp-name">${changed.length - 16} more…</span><span></span></button>` : ""}</div>
+          ${edge.noise ? `<p class="fine"><b>Safe to skip in the diff:</b> ${prose(edge.noise)}</p>` : ""}</section>`;
       }
-      // ---- curves
+      return h;
+    },
+    recMemory(r, p) {
+      const m = r.mem;
+      if (!m) return `<p class="fine">No memory measurement for this record.</p>`;
+      const kinds = memKinds(r);
+      const comps = (m.components || []).slice().sort((a, b) => (+b.x || 0) - (+a.x || 0));
+      const pm = p && p.mem ? memX(p) : null;
+      let h = `<section class="blk"><div class="mem-hero"><span class="mcat m${memLevel(m.hidden_x)}">${fmtX(m.hidden_x)}</span>
+          <div><div class="mh-t">optimizer state per hidden-matrix parameter</div><div class="mh-s">Category ${memCat(m.hidden_x)}× · whole model ${fmtX(m.total_x)} of all ${"162M"} parameters${pm != null ? ` · parent #${p.id}: ${fmtX(pm)}` : ""}</div></div></div>
+          ${memBar(r, Math.max(MEM_MAX, m.hidden_x), "big")}${memKindsLegend(kinds)}</section>`;
+      h += `<section class="blk"><div class="blk-h"><h3>What takes the memory</h3><span class="aside">× hidden-matrix parameters (84.9M)</span></div>
+          <div class="kv-wrap"><table class="kv mem-table"><tbody>${comps.map((c) => `<tr><td class="k"><span class="kdot k-${MEM_KINDS.some(([id]) => id === c.kind) ? c.kind : "other"}"></span>${prose(c.name)}${c.applies_to || (c.when && c.when !== "always") ? `<small>${prose([c.applies_to, c.when && c.when !== "always" ? c.when : ""].filter(Boolean).join(" · "))}</small>` : ""}</td><td class="v num">${(+c.x || 0).toFixed(2)}×</td></tr>`).join("")}
+          <tr class="total"><td class="k">Total</td><td class="v num">${(+m.hidden_x).toFixed(2)}×</td></tr></tbody></table></div></section>`;
+      h += `<section class="blk"><div class="blk-h"><h3>Embedding, LM head and 1-D parameters</h3><span class="aside">77.4M parameters</span></div>
+          <p class="prose-p">${prose(m.aux_note || "")} → <b>${fmtX(m.aux_x)}</b> of those parameters. This part is the same in almost every record, so the memory category above leaves it out.</p></section>`;
+      if (m.notes || (m.evidence && m.evidence.length)) {
+        h += `<section class="blk"><details class="doc"><summary>How this was counted</summary><div class="md">${m.notes ? `<p>${prose(m.notes)}</p>` : ""}${m.evidence && m.evidence.length ? `<ul>${m.evidence.map((e) => `<li>${prose(e)}</li>`).join("")}</ul>` : ""}<p>Counted: every tensor kept across steps by the optimizer and its wrappers (momentum, second moments, Kronecker factors, eigenbases, EMAs and weight snapshots), in elements. Ignored: row or column vectors, scalars, and per-step temporaries.</p></div></details></section>`;
+      }
+      return h;
+    },
+    recCurves(r, p) {
       const famC = famVar(r);
-      parts.push(`<section class="sec"><div class="sec-h"><h3>Validation loss</h3><div class="seg chart-tabs"><button type="button" data-act="curve" data-mode="tail" aria-pressed="${this.curveMode === "tail"}">Tail</button><button type="button" data-act="curve" data-mode="full" aria-pressed="${this.curveMode === "full"}">Full run</button></div></div>
-        <div class="chart-key"><span><i style="background:${famC}"></i>#${r.id} mean (band: min–max over ${r.comp.n || r.n} runs)</span>${p ? `<span><i class="ref"></i>#${p.id} parent</span>` : ""}</div>
-        <div id="curve-host"></div>
-        ${p ? `<div class="sec-h" style="margin-top:12px"><h3>Gap to parent</h3><span class="aside">loss(#${r.id}) − loss(#${p.id}); below zero is better</span></div><div>${gapChart(r, p)}</div>` : ""}
-        <div class="sec-h" style="margin-top:12px"><h3>Per-run loss at the claimed step</h3><span class="aside">tick = mean · line = 3.28</span></div>
-        ${seedStrip(p ? [{ rec: r, color: famC }, { rec: p, color: "var(--muted)" }] : [{ rec: r, color: famC }])}
-        ${r.hw && r.hw.gpu ? `<p class="desc" style="margin-top:6px">Logged on ${esc(r.hw.gpu)}${r.hw.world ? ` × ${r.hw.world}` : ""}, PyTorch ${esc(r.hw.torch)}.</p>` : ""}
-      </section>`);
-      // ---- mechanisms
+      return `<section class="blk"><div class="blk-h"><h3>Validation loss</h3><div class="seg chart-tabs"><button type="button" data-act="curve" data-mode="tail" aria-pressed="${this.curveMode === "tail"}">End of run</button><button type="button" data-act="curve" data-mode="full" aria-pressed="${this.curveMode === "full"}">Full run</button></div></div>
+          <div class="chart-key"><span><i style="background:${famC}"></i>#${r.id}, mean of ${r.comp.n || r.n} run${(r.comp.n || r.n) === 1 ? "" : "s"} (shaded: min to max)</span>${p ? `<span><i class="ref"></i>#${p.id}, its parent</span>` : ""}</div>
+          <div id="curve-host"></div></section>
+        ${p ? `<section class="blk"><div class="blk-h"><h3>Gap to the parent</h3><span class="aside">below zero means lower loss than #${p.id}</span></div>${gapChart(r, p)}</section>` : ""}
+        <section class="blk"><div class="blk-h"><h3>Every run at the claimed step</h3><span class="aside">dots are runs, ticks are means, the line is 3.28</span></div>
+          ${seedStrip(p ? [{ rec: r, color: famC }, { rec: p, color: "var(--muted)" }] : [{ rec: r, color: famC }])}
+          ${r.hw && r.hw.gpu ? `<p class="fine">Logged on ${esc(r.hw.gpu)}${r.hw.world ? ` × ${r.hw.world}` : ""} with PyTorch ${esc(r.hw.torch)}.</p>` : ""}</section>`;
+    },
+    recTechniques(r, p) {
+      const an = r.an || {};
+      let h = "";
       if (an.mechanisms && an.mechanisms.length) {
-        parts.push(`<section class="sec"><div class="sec-h"><h3>New mechanisms in this record</h3></div>${an.mechanisms.map((m) => `<div class="mech"><b>${esc(m.name || techLabel(m.id || ""))}</b><p>${esc(m.explain || "")}</p>${m.symbols && m.symbols.length && p ? `<div class="syms" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${m.symbols.map((s) => `<button type="button" class="sym" data-act="diff" data-a="${p.id}" data-b="${r.id}" data-key="${esc(symKey(r, s))}">${esc(s)}</button>`).join("")}</div>` : ""}</div>`).join("")}</section>`);
+        h += `<section class="blk"><div class="blk-h"><h3>New in this record</h3></div><div class="cards">${an.mechanisms.map((m) => {
+          const syms = (m.symbols || []).filter(Boolean);
+          return `<article class="card mech"><div class="card-h"><b>${esc(m.name || techLabel(m.id || ""))}</b></div><p>${prose(m.explain || "")}</p>${p && syms.length ? `<button type="button" class="codelink" data-act="diff" data-a="${p.id}" data-b="${r.id}" data-key="${esc(symKey(r, syms[0]))}">View in the code <span>${syms.slice(0, 3).map((s) => `<code class="tok">${esc(s)}</code>`).join(" ")}</span></button>` : ""}</article>`;
+        }).join("")}</div></section>`;
       }
-      // ---- techniques
       if (r.tech.size) {
         const byCat = CATS.map((c) => ({ c, ts: Array.from(r.tech.values()).filter((t) => (TECHS.get(t.id) || { cat: "geometry" }).cat === c.id) })).filter((x) => x.ts.length);
-        parts.push(`<section class="sec"><div class="sec-h"><h3>Active techniques</h3><span class="aside">${r.tech.size} · click to highlight</span></div><div class="tech-list">${byCat.map((g) => `<div class="tech-cat">${esc(g.c.label)}</div>` + g.ts.map((t) => {
+        h += `<section class="blk"><div class="blk-h"><h3>Everything active in this record</h3><span class="aside">${r.tech.size} · click one to highlight it on the tree</span></div><div class="tech-list">${byCat.map((g) => `<div class="tech-cat">${esc(g.c.label)}</div>` + g.ts.map((t) => {
           const o = techOrigin(r, t.id);
-          return `<button type="button" class="tech-row" data-act="lens" data-tech="${esc(t.id)}"><span><span class="tn">${esc(techLabel(t.id))}</span>${t.note ? `<span class="tnote">${esc(t.note)}</span>` : ""}</span><span class="prov ${o === r.id ? "here" : ""}">${o === r.id ? "new here" : "since #" + o}</span></button>`;
-        }).join("")).join("")}</div></section>`);
+          return `<button type="button" class="tech-row" data-act="lens" data-tech="${esc(t.id)}"><span class="tr-main"><span class="tn">${esc(techLabel(t.id))}</span>${t.note ? `<span class="tnote">${prose(t.note)}</span>` : ""}</span><span class="prov ${o === r.id ? "here" : ""}">${o === r.id ? "New here" : "Since #" + o}</span></button>`;
+        }).join("")).join("")}</div></section>`;
       }
-      // ---- hyperparameters
+      return h || `<p class="fine">No technique annotations for this record.</p>`;
+    },
+    recSettings(r, p) {
       const keys = hpKeysSorted(Object.keys(r.hp));
-      if (keys.length) {
-        const curated = new Map(((edge && edge.hparams_changed) || []).filter((h) => h && h.key).map((h) => [h.key, h]));
-        const blankV = (v) => v == null || /^(–|-|—|n\/a|none|absent|not set|)$/i.test(String(v).trim());
-        let lastG = null;
-        const rows = keys.map((k) => {
-          const g = hpGroup(k);
-          const gh = g !== lastG ? `<tr><th colspan="2">${esc((HP_GROUPS.find((x) => x[0] === g) || [0, "Technique knobs"])[1])}</th></tr>` : "";
-          lastG = g;
-          const ch = p ? curated.get(k) : null;
-          const isNew = ch && blankV(ch.from);
-          return `${gh}<tr class="${ch ? "changed" : ""}"><td class="k">${esc(hpLabel(k))}<small>${esc(k)}</small></td><td class="v">${ch && !isNew ? `<span class="from">${esc(ch.from)}</span>` : ""}${esc(r.hp[k])}${isNew ? '<span class="new-tag">new</span>' : ""}</td></tr>`;
-        }).join("");
-        parts.push(`<section class="sec"><div class="sec-h"><h3>Hyperparameters</h3>${p ? `<span class="aside">shaded: changed vs #${p.id}</span>` : ""}</div><div class="kv-wrap"><table class="kv"><tbody>${rows}</tbody></table></div></section>`);
-      }
-      // ---- docs + caveats
-      if ((an.caveats && an.caveats.trim()) || r.docs.length) {
-        parts.push(`<section class="sec"><div class="sec-h"><h3>Notes and submission docs</h3></div>
-          ${an.caveats && an.caveats.trim() ? `<div class="note"><b>Caveats:</b> ${esc(an.caveats)}</div>` : ""}
-          ${r.docs.map((d) => `<details class="doc"><summary>${esc(d.name)}</summary><div class="md">${d.html}</div></details>`).join("")}</section>`);
-      }
-      $("#inspector").innerHTML = `<div class="insp">${parts.join("")}</div>`;
-      mountCurve($("#curve-host"), p ? [{ rec: p, color: "var(--muted)", ref: true }, { rec: r, color: famC }] : [{ rec: r, color: famC }], this.curveMode);
+      if (!keys.length) return `<p class="fine">No settings recorded.</p>`;
+      const edge = r.edge || {};
+      const curated = new Map(((edge && edge.hparams_changed) || []).filter((x) => x && x.key).map((x) => [x.key, x]));
+      const blankV = (v) => v == null || /^(–|-|—|n\/a|none|absent|not set|)$/i.test(String(v).trim());
+      let lastG = null;
+      const rows = keys.map((k) => {
+        const g = hpGroup(k);
+        const gh = g !== lastG ? `<tr class="grp"><th colspan="2">${esc((HP_GROUPS.find((x) => x[0] === g) || [0, "Technique settings"])[1])}</th></tr>` : "";
+        lastG = g;
+        const ch = p ? curated.get(k) : null;
+        const isNew = ch && blankV(ch.from);
+        return `${gh}<tr class="${ch ? "changed" : ""}"><td class="k" title="${esc(k)}">${esc(hpLabel(k))}</td><td class="v">${ch && !isNew ? `<span class="from">${esc(ch.from)}</span><span class="arrow">→</span>` : ""}${esc(r.hp[k])}${isNew ? '<span class="new-tag">new</span>' : ""}</td></tr>`;
+      }).join("");
+      return `<section class="blk"><div class="blk-h"><h3>All settings</h3>${p ? `<span class="aside">highlighted rows changed from #${p.id}</span>` : ""}</div><div class="kv-wrap"><table class="kv two"><tbody>${rows}</tbody></table></div></section>`;
+    },
+    recDocs(r) {
+      const an = r.an || {};
+      return `<section class="blk"><div class="blk-h"><h3>Benchmark README entry</h3></div><p class="prose-p">${r.desc}</p></section>
+        ${an.caveats && an.caveats.trim() ? `<section class="blk"><div class="blk-h"><h3>Caveats from reading the code</h3></div><ul class="bul">${sentences(an.caveats).map((s) => `<li>${prose(s)}</li>`).join("")}</ul></section>` : ""}
+        ${r.docs.map((d, i) => `<section class="blk"><details class="doc" ${i === 0 ? "open" : ""}><summary>${esc(d.name)} from the submission</summary><div class="md">${d.html}</div></details></section>`).join("")}`;
     },
     renderCompare(a, b) {
       // a = selected, b = compare target
       const tp = treePath(a.id, b.id);
-      const older = a.steps >= b.steps ? a : b, newer = older === a ? b : a;
-      const pw = pairwise(newer, older), eg = effGain(newer, older);
-      const fp = blockDiff(b, a, true);
-      const changed = fp.entries.filter((e) => e.status && e.status !== "same");
-      const onlyA = Array.from(a.tech.keys()).filter((t) => !b.tech.has(t));
-      const onlyB = Array.from(b.tech.keys()).filter((t) => !a.tech.has(t));
-      const shared = Array.from(a.tech.keys()).filter((t) => b.tech.has(t));
-      const card = (r, tag) => `<div class="cmp-card"><div class="cc-h"><span class="swatch" style="background:${famVar(r)}"></span><span class="cc-id">#${r.id}</span>${r.wr ? '<span class="chip wr">WR</span>' : ""}<span class="chip" style="margin-left:auto">${tag}</span></div><div class="cc-n">${esc(r.short)}</div><div class="cc-s"><span class="mono">${r.steps}</span> steps · <span class="mono">${fmt4(r.mean)}</span> (n=${r.n})</div></div>`;
-      const storyItem = (id, dir) => {
-        const r = byId.get(id);
-        const t = (r.edge && r.edge.title) || r.descText.slice(0, 90);
-        const p = r.parent ? byId.get(r.parent) : null;
-        return `<li${id === tp.lca ? ' class="lca"' : ""}><span class="sd" style="background:${famVar(r)}"></span><div class="st"><b>#${id}</b> <span>${esc(r.short)}</span>${dir && p ? `<em>${dir === "up" ? "undo: " : ""}${esc(t)}</em>` : ""}</div><span class="sx">${p && dir ? (dir === "up" ? sgn(p.steps - r.steps) : sgn(r.steps - p.steps)) : r.steps}</span></li>`;
-      };
-      let story = "";
-      if (tp.up.length > 1) story += `<div class="dir">from #${a.id} up to #${tp.lca} (these changes are undone)</div>` + tp.up.slice(0, -1).map((id) => storyItem(id, "up")).join("");
-      story += storyItem(tp.lca, null);
-      if (tp.down.length > 1) story += `<div class="dir">from #${tp.lca} down to #${b.id} (these changes are applied)</div>` + tp.down.slice(1).map((id) => storyItem(id, "down")).join("");
-      // hparams diff
-      const keys = hpKeysSorted(Array.from(new Set([...Object.keys(a.hp), ...Object.keys(b.hp)])));
-      const diffKeys = keys.filter((k) => hpCore(a.hp[k]) !== hpCore(b.hp[k]));
-      const showKeys = this.hpAll ? keys : diffKeys;
-      const famA = famVar(a), famB = famVar(b);
-      const parts = [];
-      parts.push(`<div class="insp-head">
-          <div class="ih-top"><span class="ih-num">#${a.id} <span style="color:var(--muted);font-weight:500">vs</span> #${b.id}</span>
-            <div class="ih-nav"><button type="button" class="nav-btn" data-act="swap" title="Swap">⇄</button><button type="button" class="nav-btn" data-act="exit-cmp">Done</button></div></div>
-          <div class="ih-meta" style="margin-top:6px">${tp.up.length + tp.down.length - 2} step${tp.up.length + tp.down.length - 2 === 1 ? "" : "s"} apart in the tree · common ancestor #${tp.lca}</div>
-          <div class="chips" style="margin:10px 0 0"><button type="button" class="nav-btn primary" data-act="diff" data-a="${b.id}" data-b="${a.id}">Code diff #${b.id} → #${a.id}</button></div>
-        </div>`);
-      parts.push(`<section class="sec"><div class="cmp-grid">${card(a, "selected")}${card(b, "compared")}</div>
-        <div class="note" style="margin-top:10px"><b>#${newer.id}</b> ${eg >= 0 ? "comes out ahead of" : "trails"} <b>#${older.id}</b> by <b>${Math.abs(eg).toFixed(0)} effective steps</b> (${older.steps - newer.steps} steps fewer, loss ${sgn((newer.mean - older.mean) * 1e4, 1)}e-4). Pairwise score ${pw.toFixed(4)}: ${pw >= NEED ? "a significant difference by the README's rule." : "not significant by the README's rule (needs 0.004)."}</div></section>`);
-      parts.push(`<section class="sec"><div class="sec-h"><h3>Path through the tree</h3><span class="aside">each step is one record's change</span></div><ul class="story">${story}</ul></section>`);
-      if (a.tech.size || b.tech.size) {
+      const tabs = TABS_CMP;
+      const tab = tabs.some(([id]) => id === this.tabCmp) ? this.tabCmp : "overview";
+      const dist = tp.up.length + tp.down.length - 2;
+      const head = `<header class="insp-head">
+          <div class="ih-top"><div class="ih-title">
+            <div class="ih-kicker"><span class="ih-num">Comparing</span></div>
+            <h2 class="ih-name">#${a.id} ${esc(a.short)} <span class="vs">vs</span> #${b.id} ${esc(b.short)}</h2>
+            <div class="ih-meta">${dist} generation${dist === 1 ? "" : "s"} apart · common ancestor #${tp.lca}</div></div>
+            <div class="ih-nav"><button type="button" class="nav-btn" data-act="swap" title="Swap the two records">⇄ Swap</button><button type="button" class="nav-btn primary" data-act="exit-cmp">Done</button></div>
+          </div>
+          ${tabsHTML(tabs, tab)}
+        </header>`;
+      let body = "";
+      if (tab === "overview") {
+        const older = a.steps >= b.steps ? a : b, newer = older === a ? b : a;
+        const pw = pairwise(newer, older), eg = effGain(newer, older);
+        const card = (r, tag) => `<div class="cmp-card"><div class="cc-h"><span class="swatch" style="background:${famVar(r)}"></span><span class="cc-id">#${r.id}</span>${r.wr ? '<span class="chip wr">WR</span>' : ""}<span class="cc-tag">${tag}</span></div><div class="cc-n">${esc(r.short)}</div><div class="cc-s"><b>${r.steps}</b> steps · loss ${fmt4(r.mean)} · ${r.n} run${r.n === 1 ? "" : "s"}</div>${memX(r) != null ? `<div class="cc-s">optimizer memory <b>${fmtX(memX(r))}</b></div>${memBar(r, MEM_MAX, "")}` : ""}</div>`;
+        const storyItem = (id, dir) => {
+          const r = byId.get(id);
+          const t = r.plain || (r.edge && r.edge.title) || r.descText.slice(0, 90);
+          const p = r.parent ? byId.get(r.parent) : null;
+          return `<li${id === tp.lca ? ' class="lca"' : ""}><span class="sd" style="background:${famVar(r)}"></span><div class="st"><button type="button" class="linkish" data-act="go" data-id="${id}">#${id} ${esc(r.short)}</button>${dir && p ? `<em>${dir === "up" ? "Undo: " : ""}${prose(t)}</em>` : ""}</div><span class="sx">${p && dir ? (dir === "up" ? sgn(p.steps - r.steps) : sgn(r.steps - p.steps)) : r.steps}</span></li>`;
+        };
+        let story = "";
+        if (tp.up.length > 1) story += `<li class="dir">From #${a.id} back up to #${tp.lca}: these changes are undone</li>` + tp.up.slice(0, -1).map((id) => storyItem(id, "up")).join("");
+        story += storyItem(tp.lca, null);
+        if (tp.down.length > 1) story += `<li class="dir">From #${tp.lca} down to #${b.id}: these changes are applied</li>` + tp.down.slice(1).map((id) => storyItem(id, "down")).join("");
+        body = `<section class="blk"><div class="cmp-grid">${card(a, "selected")}${card(b, "compared")}</div></section>
+          <section class="blk"><div class="verdict"><div class="vnum ${eg >= 0 ? "pos" : "neg"}">${Math.abs(eg).toFixed(0)}</div>
+            <div class="vtxt">effective steps separate them, in favour of <b>#${eg >= 0 ? newer.id : older.id}</b></div>
+            <div class="vsub">#${newer.id} uses ${older.steps - newer.steps} fewer steps and ends ${Math.abs(newer.mean - older.mean).toFixed(4)} ${newer.mean <= older.mean ? "lower" : "higher"} in loss. <span class="pill ${pw >= NEED ? "ok" : "no"}">${pw >= NEED ? "✓ Statistically clear" : "Not statistically clear"}</span></div></div></section>
+          <section class="blk"><div class="blk-h"><h3>Path through the tree</h3><span class="aside">each step is one record's change</span></div><ul class="story">${story}</ul></section>`;
+      } else if (tab === "diff") {
+        const onlyA = Array.from(a.tech.keys()).filter((t) => !b.tech.has(t));
+        const onlyB = Array.from(b.tech.keys()).filter((t) => !a.tech.has(t));
+        const shared = Array.from(a.tech.keys()).filter((t) => b.tech.has(t));
         const chipsOf = (ts, cls) => ts.map((t) => `<button type="button" class="chip ${cls}" data-act="lens" data-tech="${esc(t)}">${esc(techLabel(t))}</button>`).join("");
-        parts.push(`<section class="sec"><div class="sec-h"><h3>Techniques</h3><span class="aside">${shared.length} shared</span></div>
-          <div class="kin"><div class="kin-row"><span>Only #${a.id}</span><div class="kin-list">${onlyA.length ? chipsOf(onlyA, "add") : '<span class="desc">none</span>'}</div></div>
-          <div class="kin-row"><span>Only #${b.id}</span><div class="kin-list">${onlyB.length ? chipsOf(onlyB, "del") : '<span class="desc">none</span>'}</div></div>
-          <div class="kin-row"><span>Shared</span><div class="kin-list">${shared.length ? chipsOf(shared, "") : '<span class="desc">none</span>'}</div></div></div></section>`);
+        const keys = hpKeysSorted(Array.from(new Set([...Object.keys(a.hp), ...Object.keys(b.hp)])));
+        const diffKeys = keys.filter((k) => hpCore(a.hp[k]) !== hpCore(b.hp[k]));
+        const showKeys = this.hpAll ? keys : diffKeys;
+        const memBlock = a.mem && b.mem ? (() => {
+          const mx = Math.max(memX(a), memX(b), 1);
+          const kinds = new Set([...memKinds(a).keys(), ...memKinds(b).keys()]);
+          const row = (r) => `<div class="mcmp-row"><span class="mono">#${r.id}</span><span class="mcmp-v">${fmtX(memX(r))}</span>${memBar(r, mx, "")}</div>`;
+          const d = memX(a) - memX(b);
+          return `<section class="blk"><div class="blk-h"><h3>Optimizer memory</h3><span class="aside">per hidden-matrix weight</span></div>
+            <div class="mcmp">${row(a)}${row(b)}</div>${memKindsLegend(kinds)}
+            <p class="fine">${Math.abs(d) < 0.05 ? "Both keep the same amount of optimizer state." : `#${a.id} keeps ${fmtX(Math.abs(d))} ${d > 0 ? "more" : "less"} state per hidden weight than #${b.id}.`} The Memory tab of each record lists what takes the space.</p></section>`;
+        })() : "";
+        body = memBlock + `<section class="blk"><div class="blk-h"><h3>Techniques</h3><span class="aside">${shared.length} shared</span></div>
+            <div class="kin"><div class="kin-row"><span>Only #${a.id}</span><div class="kin-list">${onlyA.length ? chipsOf(onlyA, "add") : '<span class="kin-note">none</span>'}</div></div>
+            <div class="kin-row"><span>Only #${b.id}</span><div class="kin-list">${onlyB.length ? chipsOf(onlyB, "del") : '<span class="kin-note">none</span>'}</div></div>
+            <div class="kin-row"><span>Both</span><div class="kin-list">${shared.length ? chipsOf(shared, "") : '<span class="kin-note">none</span>'}</div></div></div></section>
+          ${keys.length ? `<section class="blk"><div class="blk-h"><h3>${this.hpAll ? "All settings" : "Settings that differ"}</h3><span class="aside">${diffKeys.length} of ${keys.length} · <button type="button" class="linkish" data-act="hp-all">${this.hpAll ? "differences only" : "show all"}</button></span></div><div class="kv-wrap"><table class="kv"><thead><tr><th>Setting</th><th>#${a.id}</th><th>#${b.id}</th></tr></thead><tbody>${showKeys.map((k) => `<tr class="${this.hpAll && diffKeys.includes(k) ? "changed" : ""}"><td class="k" title="${esc(k)}">${esc(hpLabel(k))}</td><td class="v">${esc(a.hp[k] == null ? "–" : a.hp[k])}</td><td class="v">${esc(b.hp[k] == null ? "–" : b.hp[k])}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
+      } else if (tab === "curves") {
+        const famA = famVar(a), famB = famVar(b);
+        body = `<section class="blk"><div class="blk-h"><h3>Validation loss</h3><div class="seg chart-tabs"><button type="button" data-act="curve" data-mode="tail" aria-pressed="${this.curveMode === "tail"}">End of run</button><button type="button" data-act="curve" data-mode="full" aria-pressed="${this.curveMode === "full"}">Full run</button></div></div>
+            <div class="chart-key"><span><i style="background:${famA}"></i>#${a.id}</span><span><i class="ref"></i>#${b.id}</span></div><div id="curve-host"></div></section>
+          <section class="blk"><div class="blk-h"><h3>Gap</h3><span class="aside">below zero means #${a.id} has lower loss</span></div>${gapChart(a, b)}</section>
+          <section class="blk"><div class="blk-h"><h3>Every run at the claimed step</h3></div>${seedStrip([{ rec: a, color: famA }, { rec: b, color: famB }])}</section>`;
+      } else {
+        const fp = blockDiff(b, a, true);
+        const changed = fp.entries.filter((e) => e.status && e.status !== "same");
+        body = `<section class="blk"><div class="blk-h"><h3>Where the code differs</h3><span class="aside"><span class="a">+${fp.add}</span> <span class="d">${MINUS}${fp.del}</span> lines from #${b.id} to #${a.id}</span></div>
+          <div class="actions" style="margin:0 0 12px"><button type="button" class="nav-btn primary" data-act="diff" data-a="${b.id}" data-b="${a.id}">Open the full diff</button></div>
+          <div class="footprint">${changed.slice(0, 24).map((e) => `<button type="button" class="fp-row" data-act="diff" data-a="${b.id}" data-b="${a.id}" data-key="${esc(e.key)}"><span class="fp-ic">${kindIcon(e.kind)}</span><span class="fp-name">${entryLabel(e)}</span><span class="fp-stat">${entryStat(e)}</span></button>`).join("")}</div></section>`;
       }
-      if (keys.length) {
-        parts.push(`<section class="sec"><div class="sec-h"><h3>${this.hpAll ? "All hyperparameters" : "Hyperparameters that differ"}</h3><span class="aside">${diffKeys.length} of ${keys.length} differ · <button type="button" class="sym" data-act="hp-all">${this.hpAll ? "show differences only" : "show all"}</button></span></div><div class="kv-wrap"><table class="kv"><thead><tr><th>Setting</th><th>#${a.id}</th><th>#${b.id}</th></tr></thead><tbody>${showKeys.map((k) => `<tr class="${this.hpAll && diffKeys.includes(k) ? "changed" : ""}"><td class="k">${esc(hpLabel(k))}<small>${esc(k)}</small></td><td class="v">${esc(a.hp[k] == null ? "–" : a.hp[k])}</td><td class="v">${esc(b.hp[k] == null ? "–" : b.hp[k])}</td></tr>`).join("")}</tbody></table></div></section>`);
-      }
-      parts.push(`<section class="sec"><div class="sec-h"><h3>Validation loss</h3><div class="seg chart-tabs"><button type="button" data-act="curve" data-mode="tail" aria-pressed="${this.curveMode === "tail"}">Tail</button><button type="button" data-act="curve" data-mode="full" aria-pressed="${this.curveMode === "full"}">Full run</button></div></div>
-        <div class="chart-key"><span><i style="background:${famA}"></i>#${a.id}</span><span><i class="ref"></i>#${b.id}</span></div><div id="curve-host"></div>
-        <div class="sec-h" style="margin-top:12px"><h3>Gap</h3><span class="aside">loss(#${a.id}) − loss(#${b.id})</span></div>${gapChart(a, b)}
-        <div class="sec-h" style="margin-top:12px"><h3>Per-run loss at the claimed step</h3></div>${seedStrip([{ rec: a, color: famA }, { rec: b, color: famB }])}</section>`);
-      parts.push(`<section class="sec"><div class="sec-h"><h3>Code footprint #${b.id} → #${a.id}</h3><span class="aside">comments ignored</span></div>
-        <div class="fp-sum"><span><span class="a">+${fp.add}</span> <span class="d">${MINUS}${fp.del}</span> code lines</span><span>${changed.length} blocks touched</span></div>
-        <div class="footprint">${changed.slice(0, 18).map((e) => `<button type="button" class="fp-row" data-act="diff" data-a="${b.id}" data-b="${a.id}" data-key="${esc(e.key)}"><span class="fp-ic">${kindIcon(e.kind)}</span><span class="fp-name">${entryLabel(e)}</span><span class="fp-stat">${entryStat(e)}</span></button>`).join("")}</div></section>`);
-      $("#inspector").innerHTML = `<div class="insp">${parts.join("")}</div>`;
-      mountCurve($("#curve-host"), [{ rec: b, color: "var(--muted)", ref: true }, { rec: a, color: famA }], this.curveMode);
+      $("#inspector").innerHTML = `<div class="insp">${head}<div class="insp-body" role="tabpanel">${body}</div></div>`;
+      if (tab === "curves") mountCurve($("#curve-host"), [{ rec: b, color: "var(--muted)", ref: true }, { rec: a, color: famVar(a) }], this.curveMode);
     },
   };
   function symKey(r, sym) {
@@ -1640,7 +1877,9 @@
     $("#view-outline").hidden = v !== "outline";
     $("#view-timeline").hidden = v !== "timeline";
     $("#view-genome").hidden = v !== "genome";
+    $("#view-memory").hidden = v !== "memory";
     Legend.sync();
+    if (v === "memory") MemoryView.render();
     if (v === "timeline" && HAS_D3) TimelineView.render();
     if (v === "genome") GenomeView.render();
     if (v === "outline") OutlineView.sync(true);
@@ -1662,6 +1901,38 @@
   });
   try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyThemeChange); } catch (e) { /* old browsers */ }
   try { new MutationObserver(applyThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); } catch (e) { /* ignore */ }
+
+  // resizable side panel (drag the divider, arrow keys when focused, double-click to reset)
+  (function initSplitter() {
+    const sp = $("#splitter"), main = $(".main");
+    if (!sp || !main) return;
+    const apply = (w) => main.style.setProperty("--insp-w", Math.round(w) + "px");
+    const clampW = (w) => Math.max(360, Math.min(window.innerWidth * 0.72, w));
+    const saved = store.get("inspW", null);
+    if (saved) apply(clampW(saved));
+    const cur = () => $("#inspector").getBoundingClientRect().width;
+    let x0 = 0, w0 = 0;
+    const move = (e) => apply(clampW(w0 - (e.clientX - x0)));
+    const up = () => {
+      sp.classList.remove("drag"); document.body.style.cursor = "";
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      store.set("inspW", Math.round(cur()));
+      if (HAS_D3) TreeView.drawViewport();
+    };
+    sp.addEventListener("pointerdown", (e) => {
+      x0 = e.clientX; w0 = cur();
+      sp.classList.add("drag"); document.body.style.cursor = "col-resize";
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+      e.preventDefault();
+    });
+    sp.addEventListener("dblclick", () => { main.style.removeProperty("--insp-w"); store.set("inspW", null); });
+    sp.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      apply(clampW(cur() + (e.key === "ArrowLeft" ? 40 : -40)));
+      store.set("inspW", Math.round(cur()));
+      e.preventDefault(); e.stopPropagation();
+    });
+  })();
 
   const help = $("#help");
   $("#help-btn").addEventListener("click", () => { help.hidden = false; $("#help-close").focus(); });
@@ -1708,6 +1979,7 @@
       case "2": setView("outline"); break;
       case "3": setView("timeline"); break;
       case "4": setView("genome"); break;
+      case "5": setView("memory"); break;
       case "f": if (state.view === "tree" && HAS_D3) TreeView.fit(true); break;
       case "/": $("#search").focus(); break;
       case "?": help.hidden = false; break;

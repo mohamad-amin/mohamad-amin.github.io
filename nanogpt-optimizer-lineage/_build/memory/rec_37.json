@@ -1,0 +1,22 @@
+{
+ "id": 37,
+ "hidden_x": 1.0,
+ "components": [
+  {
+   "name": "MuonH momentum",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params; its weight_decay 0.001 is decoupled and adds no state",
+ "total_x": 1.48,
+ "notes": "A single MuonH instance covers all 72 block matrices; momentum is fp32 and rank-sharded across GPUs.",
+ "evidence": [
+  "MuonH.step: state[\"momentum\"] = torch.zeros_like(p)",
+  "optimizer2 = MuonH([p for p in model.blocks.parameters() if p.ndim == 2], lr=0.018)",
+  "optimizer1 = AdamW([embed 0.910], [head 0.0064], [p.ndim < 2: 0.0195], weight_decay=0.001, fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

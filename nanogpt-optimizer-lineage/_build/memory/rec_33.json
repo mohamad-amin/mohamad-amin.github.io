@@ -1,0 +1,31 @@
+{
+ "id": 33,
+ "hidden_x": 4.5,
+ "components": [
+  {
+   "name": "PSGD momentum exp_avg",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "PSGD Kronecker factors Q0 (m×m) and Q1 (n×n)",
+   "kind": "preconditioner",
+   "x": 3.5,
+   "applies_to": "all 72 hidden matrices (two sides each): 768²+768² = 2× per attention matrix, 3072²+768² = 4.25× per MLP matrix → 0.67 + 2.83",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params",
+ "total_x": 3.31,
+ "notes": "Q0 and Q1 are stored as dense fp32 m×m and n×n matrices (no max-dimension rule, so 3072×3072 on each MLP matrix's long side), although only their upper triangles are non-zero, so about half of the 3.5× is structural zeros. The products Q0ᵀQ0, Q1ᵀQ1 and the Gaussian probes are rebuilt every step and are not kept.",
+ "evidence": [
+  "init_psgd: Q0 = torch.eye(m, dtype=torch.float32) * s; Q1 = torch.eye(n, dtype=torch.float32) * s",
+  "PSGDKron.step: state[\"Q0\"], state[\"Q1\"] = init_psgd(grad); state[\"exp_avg\"] = torch.zeros_like(grad) with grad = p.grad.squeeze().float()",
+  "psgd_update_precond: Q0.sub_(precond_lr / ell0 * torch.triu(AAt - BBt) @ Q0) (likewise Q1): updated in place, stays upper-triangular",
+  "optimizer2 = PSGDKron(hidden_matrix_params = [p for p in model.blocks.parameters() if p.ndim >= 2])",
+  "optimizer1 = torch.optim.AdamW(embed / head / scalar groups, betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

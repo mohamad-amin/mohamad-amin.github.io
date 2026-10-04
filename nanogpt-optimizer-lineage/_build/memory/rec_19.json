@@ -1,0 +1,46 @@
+{
+ "id": 19,
+ "hidden_x": 9.0,
+ "components": [
+  {
+   "name": "Adam first moment exp_avg (in the KL-SOAP eigenbasis)",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "Adam second moment exp_avg_sq (in the KL-SOAP eigenbasis)",
+   "kind": "second_moment",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "KL-Shampoo factor EMAs GG_L (rows×rows) and GG_R (cols×cols)",
+   "kind": "preconditioner",
+   "x": 3.5,
+   "applies_to": "all 72 hidden matrices (two sides each): 768²+768² = 2× per attention matrix, 3072²+768² = 4.25× per MLP matrix → 0.67 + 2.83",
+   "when": "always"
+  },
+  {
+   "name": "Eigenbases Q_L (rows×rows) and Q_R (cols×cols)",
+   "kind": "eigenbasis",
+   "x": 3.5,
+   "applies_to": "all 72 hidden matrices (two sides each): 768²+768² = 2× per attention matrix, 3072²+768² = 4.25× per MLP matrix → 0.67 + 2.83",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params",
+ "total_x": 5.66,
+ "notes": "There is no max-preconditioner-dimension rule, so every side gets a dense fp32 factor and basis, including 3072×3072 on each MLP matrix's long side; the per-side eigenvalue vectors eigen_sqrt_inv (rows+cols per matrix) are ignored. The state is rank-sharded across GPUs and is created on the first step(), which only initializes it.",
+ "evidence": [
+  "init_2d_klsoap_state_: state[\"GG\"] = [grad @ grad.T / cols, grad.T @ grad / rows] (rows×rows, cols×cols, fp32)",
+  "init_2d_klsoap_state_: state[\"Q\"] = [_initial_orthogonal_matrix(GG[0]), _initial_orthogonal_matrix(GG[1])]",
+  "init_2d_klsoap_state_: state[\"exp_avg\"] = torch.zeros_like(grad, dtype=torch.float32); state[\"exp_avg_sq\"] likewise",
+  "init_2d_klsoap_state_: state[\"eigen_sqrt_inv\"] = [torch.full((rows,)), torch.full((cols,))]: vectors, ignored",
+  "optimizer2..5 = KLSOAPH(qkv_params | mlp_fc_params | attn_proj_params | mlp_proj_params): all 72 block matrices",
+  "optimizer1 = AdamW([embed.weight], [proj.weight], [p.ndim < 2], betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

@@ -1,0 +1,405 @@
+{
+ "1": {
+  "plain": "Trains the hidden weight matrices inside the transformer blocks with Muon (Nesterov momentum, then Newton–Schulz orthogonalization) and the embedding, output head, norm gains and biases with AdamW.",
+  "bullets": [
+   "Muon learning rate 0.02 for the hidden matrices",
+   "Muon weight decay 0.01",
+   "Flat learning rate, then linear decay to zero over the last 70%",
+   "Attention and MLP output projections and the head start at zero"
+  ]
+ },
+ "2": {
+  "plain": "Replaces Muon with ordinary AdamW on the hidden matrices and adds a 250-step warmup, giving an Adam reference point that the benchmark notes is likely undertuned.",
+  "bullets": [
+   "Hidden matrices switch from Muon to AdamW",
+   "AdamW learning rate 0.0015 on hidden matrices",
+   "Hidden weight decay 0.01 → 0.1",
+   "250-step linear warmup for every parameter group"
+  ]
+ },
+ "3": {
+  "plain": "Retunes the baseline by raising both the Muon learning rate and weight decay by 25%, leaving the optimizer code, schedule shape and init unchanged.",
+  "bullets": [
+   "Muon learning rate 0.02 → 0.025",
+   "Muon weight decay 0.01 → 0.0125"
+  ]
+ },
+ "4": {
+  "plain": "Replaces Muon with AdamH, an Adam step taken on a hyperball that keeps each hidden matrix's norm fixed at its initial value, so weight decay is dropped.",
+  "bullets": [
+   "Per-element Adam direction instead of orthogonalized momentum",
+   "Nonzero, scaled-up init for output projections and MLP inputs",
+   "Hidden learning rate decays over the whole run, AdamW over last 40%",
+   "250-step warmup for the hidden learning rate"
+  ]
+ },
+ "5": {
+  "plain": "Applies Muon's update as a hyperball step that holds hidden-matrix norms at their initial values, so the learning rate sets a relative step and weight decay is dropped.",
+  "bullets": [
+   "Step length set to learning rate times weight norm, then renormalized",
+   "Nonzero, scaled-up init for output projections and MLP inputs",
+   "Hidden learning rate decays from the start, AdamW over last 40%",
+   "Muon learning rate 0.02 → 0.018"
+  ]
+ },
+ "6": {
+  "plain": "Doubles the Muon weight decay to 0.025 and switches to Gaussian init for hidden weights with all biases at zero; the two changes were not tested separately.",
+  "bullets": [
+   "Muon weight decay 0.0125 → 0.025",
+   "Hidden weights Gaussian instead of uniform, similar scale",
+   "All biases start at zero"
+  ]
+ },
+ "7": {
+  "plain": "Switches to Muon², which divides the momentum elementwise by a running RMS of the gradient before orthogonalizing, balancing per-coordinate scales first, and raises the learning rate fourfold.",
+  "bullets": [
+   "Adam-style second-moment scaling before Newton–Schulz",
+   "Muon learning rate 0.025 → 0.10",
+   "Second-moment decay 0.95, no bias correction"
+  ]
+ },
+ "8": {
+  "plain": "Adds NorMuon to MuonH: each row of the orthogonalized update is divided by its running RMS, evening out update size across neurons before the hyperball step.",
+  "bullets": [
+   "Per-row running RMS normalization after Newton–Schulz",
+   "Wide MLP output matrices normalized per column instead",
+   "Result claimed 25 steps before the learning rate reaches zero",
+   "Normalizer decay 0.95, no bias correction"
+  ]
+ },
+ "9": {
+  "plain": "Adds NorMuon-lite row normalization and an update-to-weight floor that enlarges small updates, replacing weight decay as the way to keep relative step sizes from shrinking as weights grow.",
+  "bullets": [
+   "Update norm floored at 0.35 times the weight norm",
+   "Weight decay no longer applied to hidden matrices",
+   "NorMuon-lite: per-row RMS normalization, overall norm kept",
+   "Muon learning rate 0.02 → 0.0375"
+  ]
+ },
+ "10": {
+  "plain": "Switches the hidden matrices to NorMuon, which evens out update size across neurons while keeping Muon's overall step size, and raises the learning rate to 0.035.",
+  "bullets": [
+   "Per-row running RMS normalization after Newton–Schulz",
+   "Update rescaled back to its original overall norm",
+   "Muon learning rate 0.025 → 0.035",
+   "Result claimed 50 steps before the learning rate reaches zero"
+  ]
+ },
+ "11": {
+  "plain": "Adds Contra-Muon, which subtracts a small multiple of the spectrally normalized momentum from the orthogonalized update, giving dominant momentum directions slightly smaller steps than weak ones.",
+  "bullets": [
+   "Subtracts 0.2 times the normalized momentum after Newton–Schulz",
+   "Momentum normalized by its top singular value",
+   "Result rescaled back to the orthogonalized update's norm"
+  ]
+ },
+ "12": {
+  "plain": "Raises the Muon learning rate from 0.025 to 0.035, borrowing NorMuon's tuned value, and claims its result 25 steps before the learning rate reaches zero.",
+  "bullets": [
+   "Muon learning rate 0.025 → 0.035",
+   "Result claimed 25 steps before the learning rate reaches zero",
+   "Denser validation near the end to fix the stop step"
+  ]
+ },
+ "13": {
+  "plain": "Wraps NorMuonH and AdamW in a MuLoCo outer loop: every 30 steps the net weight change drives an outer Nesterov step that extrapolates past the inner optimizer's endpoint.",
+  "bullets": [
+   "Outer Nesterov SGD step every 30 inner steps",
+   "Outer learning rate 0.7, applied to all parameters",
+   "Overshoots the inner endpoint by up to about 40%",
+   "Hidden-matrix norms can drift at each outer step"
+  ]
+ },
+ "14": {
+  "plain": "Adds SOAP preconditioning to the MLP matrices, whitening the momentum Adam-style in the gradient's eigenbasis before Newton–Schulz orthogonalizes it.",
+  "bullets": [
+   "SOAP whitening before Newton–Schulz, MLP matrices only",
+   "Eigenbasis refreshed every 10 steps",
+   "Contra-Muon now uses the preconditioned momentum",
+   "Result claimed 25 steps before the learning rate reaches zero"
+  ]
+ },
+ "15": {
+  "plain": "Adds Newton-Muon, which whitens each hidden gradient by the inverse of its layer's input covariance before the Muon step, and gives each matrix type its own learning rate.",
+  "bullets": [
+   "Gradient multiplied by inverse input covariance before momentum",
+   "Covariance re-estimated and inverted every 64 steps",
+   "Learning rate and weight decay split by matrix type",
+   "Possibly inactive: compilation may skip the statistics collection (unverified)"
+  ]
+ },
+ "16": {
+  "plain": "Extends SOAP preconditioning to the attention output projections, with a trust gate that falls back toward raw momentum when the SOAP direction disagrees, down-weighting stale whitening.",
+  "bullets": [
+   "SOAP extended to attention output projections; query, key, value unchanged",
+   "Trust gate mixes SOAP and raw momentum by agreement",
+   "Gate kept within fixed bounds early in training",
+   "SOAP denominator floored at 0.2 of its RMS"
+  ]
+ },
+ "17": {
+  "plain": "Replaces plain Newton–Schulz orthogonalization on the MLP matrices with Aurora, which rebalances rows first so no single neuron gets an outsized share of the update.",
+  "bullets": [
+   "Aurora row balancing before Newton–Schulz on MLP matrices",
+   "Square attention matrices keep plain Newton–Schulz",
+   "NorMuon-lite normalization dropped, unmentioned by the authors",
+   "Gaussian hidden init and zero biases"
+  ]
+ },
+ "18": {
+  "plain": "Adds PMuon's two-sided preconditioner before Newton–Schulz, damping momentum directions that have been consistently large on either side, while keeping the parent's learning rate and weight decay.",
+  "bullets": [
+   "Running left and right covariances of the momentum",
+   "Inverse 0.3 power of each covariance applied",
+   "Eigenbases tracked with one QR step per iteration"
+  ]
+ },
+ "19": {
+  "plain": "Replaces NorMuon's orthogonalized direction with KL-SOAP, which runs Adam in an eigenbasis built from KL-Shampoo statistics, while keeping the hyperball step and the parent's init and schedules.",
+  "bullets": [
+   "No Newton–Schulz: Adam step in a rotated eigenbasis",
+   "Eigenbasis from KL-Shampoo factors, refreshed every step",
+   "Adam momentum 0.95 in the eigenbasis",
+   "First step only initializes the preconditioner"
+  ]
+ },
+ "20": {
+  "plain": "Adds the PowerCool power-law cooldown and a time-varying update: Contra-Muon fades out by step 2000, then the update blends toward Soft-Muon, which gives stronger directions larger steps.",
+  "bullets": [
+   "PowerCool cooldown; training stops before the rate reaches zero",
+   "Late blend toward Soft-Muon, capped at 80%",
+   "Attention SOAP moved from output projections to value matrices",
+   "Update-to-weight floor 0.35 → 0.3825"
+  ]
+ },
+ "21": {
+  "plain": "Replaces Muon with Shampoo, preconditioning the momentum by inverse fourth roots of left and right gradient covariances, with each step's size borrowed from Adam (grafting).",
+  "bullets": [
+   "Inverse fourth-root preconditioners, recomputed every 5 steps",
+   "Step size grafted from Adam, matrix by matrix",
+   "Learning rate 0.035 → 0.0015",
+   "Decoupled weight decay 0.025 → 0.2"
+  ]
+ },
+ "22": {
+  "plain": "Turns off Muon's momentum so each step orthogonalizes the raw minibatch gradient, isolating how much Muon gains from momentum; it needs roughly 2.5 times as many steps.",
+  "bullets": [
+   "Muon momentum 0.95 → 0, pure spectral descent",
+   "Learning rate 0.035 → 0.03",
+   "Weight decay 0.025 → 0.015",
+   "Result claimed 275 steps before the schedule ends"
+  ]
+ },
+ "23": {
+  "plain": "Replaces Muon with Muown, splitting each weight row into an Adam-trained length and a direction moved by orthogonalized steps whose angular size shrinks on a schedule; no weight decay.",
+  "bullets": [
+   "Row lengths trained by Adam, row directions by orthogonalized momentum",
+   "Scheduled growth of the direction's norm shrinks angular steps",
+   "Power-law cooldown that ends after training stops",
+   "AdamW learning rates raised two- to threefold"
+  ]
+ },
+ "24": {
+  "plain": "Splits the learning-rate cooldown so the hidden matrices decay over the last 80% of training while AdamW parameters hold their peak rate until the last 40%.",
+  "bullets": [
+   "Muon decay window: last 70% → last 80%",
+   "AdamW decay window: last 70% → last 40%"
+  ]
+ },
+ "25": {
+  "plain": "Replaces both linear decays with a power-law cooldown above small learning-rate floors and stops training before the schedule ends, so final learning rates stay above zero.",
+  "bullets": [
+   "Power-law decay with exponent 1.5 replaces linear",
+   "KL-SOAP learning-rate floor at 1.7% of peak",
+   "AdamW learning-rate floor at 4% of peak",
+   "Training stops 85 steps before the schedule ends"
+  ]
+ },
+ "26": {
+  "plain": "Replaces NorMuon with SinkSOAP, which skips Newton–Schulz and instead balances the momentum's rows and columns with Sinkhorn iterations inside the gradient's eigenbasis, a SOAP-like generalization of Muon.",
+  "bullets": [
+   "No Newton–Schulz: Sinkhorn balancing in a rotated basis",
+   "Gradient Gram eigenbases recomputed every step",
+   "NorMuon normalization kept only for the MLP matrices",
+   "Learning rate 0.035 → 0.04"
+  ]
+ },
+ "27": {
+  "plain": "Swaps KL-SOAP for standard SOAP inside the hyperball step and gives the hidden matrices a power-law learning-rate decay whose horizon extends past the end of training.",
+  "bullets": [
+   "Plain Shampoo statistics replace KL-Shampoo for the eigenbasis",
+   "Hidden learning-rate decay exponent 1 → 1.25",
+   "Hidden schedule ends 75 steps after training stops",
+   "Momentum kept in the original basis, not rotated"
+  ]
+ },
+ "28": {
+  "plain": "Switches to DynMuon, which reshapes the orthogonalized update with a scheduled exponent on the singular values, mildly favoring weak directions for most of training.",
+  "bullets": [
+   "Spectral exponent: slightly positive early, about -0.25 later",
+   "Cheap polynomial approximation, much weaker than an exact power",
+   "Muon weight decay 0.01 → 0.025",
+   "Gaussian hidden init and zero biases"
+  ]
+ },
+ "29": {
+  "plain": "Adds a radial brake that halves the part of each update pushing weights outward, then pins each matrix's norm after the step so sideways moves no longer inflate it.",
+  "bullets": [
+   "Outward radial part of the update scaled by 0.5",
+   "Inward radial part left untouched",
+   "Norm reset after each step, removing sideways norm creep",
+   "Brake applied before the update-to-weight floor"
+  ]
+ },
+ "30": {
+  "plain": "Adds Aurora to the MLP output matrices so each MLP neuron gets a near-equal update share, turns off Soft-Muon and NorMuon-lite, and lengthens the Contra-Muon fade.",
+  "bullets": [
+   "Aurora balancing on the MLP output matrices only",
+   "Turns off Soft-Muon and NorMuon-lite",
+   "Muon momentum ramps 0.85 → 0.95, then back down late",
+   "New inits: depth-scaled MLP inputs, randomly tilted norm gains"
+  ]
+ },
+ "31": {
+  "plain": "Adds a fading Contra-Muon term and NorMuon-lite, which roughly equalizes per-row angular steps, to Muown's direction updates, and retunes the learning-rate and norm schedules.",
+  "bullets": [
+   "Contra-Muon on direction updates, fading out by step 1925",
+   "NorMuon-lite with short memory, decay 0.8",
+   "Muown learning rate 0.00325 → 0.0045",
+   "Shorter, retuned learning-rate and norm-growth schedules"
+  ]
+ },
+ "32": {
+  "plain": "Adds a SODA-style pull of each hidden matrix toward its initial value, with strength shrinking over time, so early updates are gradually forgotten before the pull fades out late.",
+  "bullets": [
+   "Weights mixed toward initial values before each update",
+   "Mixing weight shrinks like one over the step count",
+   "Pull cosine-faded to zero by step 2750",
+   "Acts as decay toward zero for zero-initialized output projections"
+  ]
+ },
+ "33": {
+  "plain": "Replaces Muon with PSGD, whose Kronecker-factored preconditioner is fitted every step to whiten the momentum, and applies the result through a norm-preserving hyperball step without weight decay.",
+  "bullets": [
+   "Kronecker preconditioner refit every step against a random probe",
+   "PSGD learning rate 0.025, decaying linearly from the start",
+   "Nonzero, per-module scaled init; nothing starts at zero",
+   "AdamW decays over second half, only to 10% of peak"
+  ]
+ },
+ "34": {
+  "plain": "Adds late reduced-rank extrapolation (RRE) of the hidden weights: a capped jump every 5 steps from step 2820 that in practice pulls weights back, like iterate averaging.",
+  "bullets": [
+   "Extrapolation from the last 4 weight snapshots",
+   "Each jump damped and capped at 0.1% of weight norm",
+   "Optimizer momentum and SOAP statistics left untouched",
+   "Training stops at step 2925; schedules unchanged"
+  ]
+ },
+ "35": {
+  "plain": "Retunes Shampoo to recompute undamped pseudo-inverse roots every step with shorter memory, tracking recent gradient geometry closely; though labeled one-sided, it still preconditions both sides.",
+  "bullets": [
+   "Pseudo-inverse roots with no damping term",
+   "Roots recomputed every step instead of every 5",
+   "Learning rate 0.0015 → 0.01",
+   "Statistics decay 0.95 → 0.9 for factors and graft"
+  ]
+ },
+ "36": {
+  "plain": "Retunes hyperparameters only: higher AdamW learning rates with light weight decay, and a lower Muon learning rate with stronger weight decay; this became the official baseline.",
+  "bullets": [
+   "Muon learning rate 0.035 → 0.025",
+   "Muon weight decay 0.025 → 0.05",
+   "AdamW learning rates raised, embedding 0.3 → 0.7",
+   "AdamW weight decay 0 → 0.001"
+  ]
+ },
+ "37": {
+  "plain": "Grafts the tuned AdamW settings from the #36 baseline onto MuonH, scaled up further and with a longer AdamW cooldown, leaving MuonH itself unchanged.",
+  "bullets": [
+   "AdamW learning rates raised, embedding 0.3 → 0.91",
+   "AdamW decay window: last 40% → last 85%",
+   "AdamW weight decay 0 → 0.001",
+   "Output head no longer zero-initialized"
+  ]
+ },
+ "38": {
+  "plain": "Retunes the late phase (Tempered-Polar, tighter radial brake, higher update-to-weight floor) and, for evaluation only, moves weights back along recent updates and toward a step-2375 snapshot.",
+  "bullets": [
+   "Final eval blends weights 7.5% back toward an earlier snapshot",
+   "Evals from step 2500 shift hidden weights back along recent updates",
+   "Tempered-Polar: slight late tilt back toward raw momentum",
+   "Outward radial brake tightened 0.5 → 0.4 late"
+  ]
+ },
+ "39": {
+  "plain": "Wraps the Muon and AdamW optimizers in EMA-Nesterov, which shifts weights along a slow average of recent displacements before each gradient computation, acting as an extra long-horizon momentum.",
+  "bullets": [
+   "Lookahead along a 0.99 moving average of weight changes",
+   "Shift size 0.6, shrinking with the learning-rate schedule",
+   "Shifts applied only from step 500 to 2400"
+  ]
+ },
+ "40": {
+  "plain": "Wraps the full optimizer in EMA-Nesterov, an extra momentum that shifts weights along a slow average of recent displacements before each gradient, and shortens the schedules.",
+  "bullets": [
+   "Lookahead along a 0.99 moving average of weight changes",
+   "Shift size 0.3, shrinking with the AdamW learning rate",
+   "Shifts applied only from step 300 to 1950",
+   "Run length 3020 → 2900 steps, schedules shifted earlier"
+  ]
+ },
+ "41": {
+  "plain": "Adds Circuit-Muon, which couples each attention head's value and output updates so the head's combined value-output map changes in a balanced way as their norms evolve.",
+  "bullets": [
+   "Each head's value and output updates scaled by partner's inverse size",
+   "Pure rescaling direction of each pair projected out",
+   "Each matrix's overall update norm left unchanged"
+  ]
+ },
+ "42": {
+  "plain": "Zero-initializes all biases, drops the random norm-gain init, and evaluates late weights blended 7.5% back toward a step-2375 snapshot, the same readout as #38.",
+  "bullets": [
+   "Late evals use weights blended 7.5% toward an earlier snapshot",
+   "Query, key, value and MLP input biases start at zero",
+   "Random norm-gain init dropped; all gains start at 1",
+   "Training stops at step 2860, before schedules finish"
+  ]
+ },
+ "43": {
+  "plain": "Adds fixed late pulses that move weights back along their recent path (TrailDelta, BroadDelta) and final readouts toward an earlier anchor, while training ends at a higher learning rate.",
+  "bullets": [
+   "TrailDelta: two pull-backs along the last 100 steps' path",
+   "BroadDelta: one small pull-back at step 2400",
+   "Final readout moves weights 8% toward an earlier anchor",
+   "Cooldown end pushed later at step 2600, raising the learning rate"
+  ]
+ },
+ "44": {
+  "plain": "Extends SOAP to every hidden matrix with the eigenbasis refreshed each step, removes Circuit-Muon, Contra-Muon and Aurora, and gives biases longer second-moment memory in Adam.",
+  "bullets": [
+   "SOAP on all hidden matrices, eigenbasis refreshed every step",
+   "Removes Circuit-Muon, Contra-Muon and Aurora",
+   "1-D Adam without bias correction; longer memory for biases",
+   "Momentum cooldown doubled to 200 steps"
+  ]
+ },
+ "45": {
+  "plain": "Adds a Tail-EMA readout: at step 2720 the weights are blended 60% toward their 150-step moving average to cancel late oscillation noise, and training stops there.",
+  "bullets": [
+   "Moving average of non-embedding weights from step 2000",
+   "Average time constant 150 steps",
+   "One-time 60% blend toward the average before final eval",
+   "Training stops mid-cooldown, schedules unchanged"
+  ]
+ },
+ "46": {
+  "plain": "Replaces the matrix-level update-to-weight floor with a per-row floor, adds Cautious Weight Decay on coordinates already shrinking, and makes the Tail-EMA blend an evaluation-only readout.",
+  "bullets": [
+   "Each update row floored at 0.3825 times its weight row's norm",
+   "Cautious weight decay 0.025, only on coordinates the step shrinks",
+   "Tail-EMA blend used only for evaluation; weights restored",
+   "Training runs the full schedule instead of stopping early"
+  ]
+ }
+}

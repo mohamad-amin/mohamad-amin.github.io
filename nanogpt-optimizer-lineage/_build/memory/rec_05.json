@@ -1,0 +1,23 @@
+{
+ "id": 5,
+ "hidden_x": 1.0,
+ "components": [
+  {
+   "name": "MuonH momentum",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params",
+ "total_x": 1.48,
+ "notes": "Momentum is fp32 and rank-sharded (each GPU keeps buffers only for the matrices it owns); the Nesterov blend is written into p.grad and Newton–Schulz works on temporaries, so nothing else persists.",
+ "evidence": [
+  "MuonH.step: state[\"momentum\"] = torch.zeros_like(p)",
+  "muon_update: momentum.lerp_(grad, 1 - mu); update = grad.lerp_(momentum, mu): no extra buffer",
+  "optimizer2..5 = MuonH(qkv_params | mlp_fc_params | attn_proj_params | mlp_proj_params, lr=0.018): all 72 block matrices",
+  "optimizer1 = AdamW([embed.weight], [proj.weight], [p.ndim < 2], betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

@@ -1,0 +1,69 @@
+{
+  "id": 38,
+  "hidden_x": 10.75,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment in the eigenbasis (exp_avg_sq)",
+      "kind": "second_moment",
+      "x": 0.75,
+      "applies_to": "36 SOAP matrices: 24 MLP (mlp.fc, mlp.proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors row_gg + col_gg",
+      "kind": "preconditioner",
+      "x": 3.0,
+      "applies_to": "24 MLP matrices (3072² + 768² = 4.25× each) + 12 attn.v (768² + 768² = 2× each)",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases q_row + q_col",
+      "kind": "eigenbasis",
+      "x": 3.0,
+      "applies_to": "same 36 matrices (4.25× per MLP matrix, 2× per attn.v)",
+      "when": "always"
+    },
+    {
+      "name": "Tail-velocity EMA of per-step weight change (eval readout)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "late, from step 2500"
+    },
+    {
+      "name": "Tail-velocity previous-weights copy",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "late, from step 2500"
+    },
+    {
+      "name": "Step-2375 reference weights (eval readout, CPU)",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all float parameters (all 72 hidden matrices; embedding, head and 1-D share in aux_x)",
+      "when": "late, from step 2375"
+    }
+  ],
+  "aux_x": 3.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params (2.0) + the step-2375 reference copy, which covers every float parameter (1.0, CPU, from step 2375); tail-velocity buffers cover Muon matrices only",
+  "total_x": 7.05,
+  "notes": "The tail-velocity buffers are fp32 on GPU from step 2500, while the θ_2375 reference sits in host (CPU) memory (fp32, bf16 for the embedding); tail-EMA and agreement-shrink are off in the run (TAIL_EMA_ENABLED/AGREE_SHRINK_ENABLED=False) and allocate nothing. NorMuon-lite row vectors (inert) and the per-validation delta lists used to apply and undo the readouts are not counted.",
+  "evidence": [
+    "Muon.step L989: state[\"momentum\"] = torch.zeros_like(p) for every Muon param (model.blocks ndim>=2, L1287)",
+    "Muon.step L990-993: if p in soap_params (SOAP_PARAM_MODE=\"mlp_plus_v\" L115: mlp.fc, mlp.proj, attn.v) exp_avg_sq = zeros_like(p, fp32), row_gg = zeros(p.size(0), p.size(0)), col_gg = zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner L749-751: state[\"q_row\"], state[\"q_col\"] = soap_eigenbasis(row_gg / col_gg), replaced by soap_basis_qr every 10 steps",
+    "update_tail_velocity L1320-1331 (called with step+1, L1732; TAIL_VEL_ENABLED, start 2500): tail_vel_prev_params[p] = p.detach().clone(); tail_vel_buffers[p] = torch.zeros_like(p) for tail_vel_params = Muon params (L1304)",
+    "maybe_capture_ref_extrap_state L1412-1424 (called with step+1, L1733; REF_EXTRAP_CAPTURE_STEP=2375): {name: p.detach().cpu().clone() for all floating-point model params}",
+    "run.sh + all 9 seed logs: tail_vel_enabled=True start 2500, ref_extrap_capture_step=2375, tail_ema_enabled=False, agree_shrink_enabled=False, save_checkpoint_steps=[]",
+    "Muon L997-1003: state[\"second_moment\"] is (m,1) or (1,n) -> O(rows+cols), not counted",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [ndim<2 params], fused=True) L1282-1285 -> exp_avg + exp_avg_sq"
+  ]
+}

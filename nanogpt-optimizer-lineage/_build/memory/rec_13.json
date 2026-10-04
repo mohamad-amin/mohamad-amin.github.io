@@ -1,0 +1,39 @@
+{
+ "id": 13,
+ "hidden_x": 3.0,
+ "components": [
+  {
+   "name": "NorMuonH momentum",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "MuLoCo outer Nesterov momentum buffer",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices (the wrapper covers every parameter)",
+   "when": "always"
+  },
+  {
+   "name": "MuLoCo parameter snapshot (sync anchor)",
+   "kind": "weight_copy",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices (the wrapper covers every parameter)",
+   "when": "always"
+  }
+ ],
+ "aux_x": 4.0,
+ "aux_note": "AdamW m and v (2.0) plus MuLoCo snapshot and outer momentum (2.0) on embedding, LM head and 1-D params",
+ "total_x": 3.48,
+ "notes": "The MuLoCo snapshot and outer-momentum lists are allocated at construction for every parameter (in its own dtype, so bf16 for the embedding) and replicated on every GPU, whereas NorMuonH momentum is rank-sharded. NorMuon's per-row v vectors and the transient second snapshot list built at each 30-step sync are ignored.",
+ "evidence": [
+  "NorMuonH.step: state[\"momentum\"] = torch.zeros_like(p)",
+  "NesterovOuterOptimizer.__init__: self._param_snapshots = [p.data.clone() for p in self._all_params]",
+  "NesterovOuterOptimizer.__init__: self._outer_momentum_buffers = [torch.zeros_like(p.data) for p in self._all_params]",
+  "outer_optimizer = NesterovOuterOptimizer(list(model.parameters()), ...): USE_OUTER_OPTIMIZER defaults to '1' and all logs print 'MuLoCo outer optimizer ENABLED'",
+  "_outer_step: u.mul_(outer_momentum).add_(delta, alpha=outer_lr); then self._param_snapshots = [p.data.clone() ...] (re-snapshot every 30 steps)",
+  "optimizer1 = AdamW([embed.weight], [proj.weight], [p.ndim < 2], betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

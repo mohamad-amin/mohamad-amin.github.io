@@ -1,0 +1,22 @@
+{
+  "id": 22,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muon momentum buffer (mu=0: holds a copy of the current gradient)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "With mu=0, Muon.step still allocates the momentum buffer (it does so whatever mu is). momentum.lerp_(grad, 1) overwrites it with the current gradient every step, so it carries nothing between steps; without it the hidden optimizer would hold no state (hidden 0×, total 0.95).",
+  "evidence": [
+    "rec_22.py:208 Muon.step: state[\"momentum\"] = torch.zeros_like(p), allocated whatever mu is",
+    "rec_22.py:184-185 muon_update: momentum.lerp_(grad, 1 - mu); update = zeropower_via_newtonschulz5(momentum) - with mu=0 the buffer is a copy of grad",
+    "rec_22.py:290-291 optimizer2 = Muon(block 2-D params, lr=0.03, weight_decay=0.015, mu=0); :286-289 optimizer1 = AdamW(aux groups, fused=True)"
+  ]
+}

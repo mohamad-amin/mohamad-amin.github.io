@@ -1,0 +1,22 @@
+{
+  "id": 12,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muon momentum (mu=0.95)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "The momentum is fp32, allocated on the first step and only on the rank that owns each matrix in Muon's round-robin sharding; the aux AdamW m/v take the param dtype (bf16 for the embedding).",
+  "evidence": [
+    "rec_12.py:209 Muon.step: state[\"momentum\"] = torch.zeros_like(p); updated in muon_update by momentum.lerp_(grad, 1 - mu) (:184)",
+    "rec_12.py:291-292 optimizer2 = Muon([p for p in model.blocks.parameters() if p.ndim >= 2], ...): the 72 hidden matrices",
+    "rec_12.py:287-290 optimizer1 = AdamW(embed.weight / proj.weight / ndim<2 groups, fused=True): torch AdamW keeps exp_avg and exp_avg_sq per param (amsgrad off)"
+  ]
+}

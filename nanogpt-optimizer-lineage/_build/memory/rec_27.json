@@ -1,0 +1,46 @@
+{
+ "id": 27,
+ "hidden_x": 9.0,
+ "components": [
+  {
+   "name": "SOAP momentum_buffer (parameter space)",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "SOAP square_buffer (Adam v in the eigenbasis)",
+   "kind": "second_moment",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "Shampoo factor EMAs left_buffer (m×m) and right_buffer (n×n)",
+   "kind": "preconditioner",
+   "x": 3.5,
+   "applies_to": "all 72 hidden matrices (two sides each): 768²+768² = 2× per attention matrix, 3072²+768² = 4.25× per MLP matrix → 0.67 + 2.83",
+   "when": "always"
+  },
+  {
+   "name": "Eigenbases Q_left (m×m) and Q_right (n×n)",
+   "kind": "eigenbasis",
+   "x": 3.5,
+   "applies_to": "all 72 hidden matrices (two sides each): 768²+768² = 2× per attention matrix, 3072²+768² = 4.25× per MLP matrix → 0.67 + 2.83",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params",
+ "total_x": 5.66,
+ "notes": "There is no max-dimension rule: SOAPH allocates dense m×m and n×n factors and bases for every matrix (3072×3072 on each MLP matrix's long side), all fp32 (p.dtype). The logged runs were single-GPU, so this entire state sits on one device.",
+ "evidence": [
+  "SOAPH._init_state: state[\"momentum_buffer\"] = torch.zeros_like(p); state[\"square_buffer\"] = torch.zeros_like(p)",
+  "SOAPH._init_state: state[\"left_buffer\"] = torch.zeros((m, m)); state[\"right_buffer\"] = torch.zeros((n, n))",
+  "SOAPH._init_state: state['Q_left'] = _initial_orthogonal_matrix(p.grad @ p.grad.T); state[\"Q_right\"] = _initial_orthogonal_matrix(p.grad.T @ p.grad)",
+  "SOAPH._refresh_q: state[\"Q_left\"].copy_(...), state[\"Q_right\"].copy_(...): bases kept and updated in place",
+  "optimizer2..5 = SOAPH(qkv_params | mlp_fc_params | attn_proj_params | mlp_proj_params, lr=lr): all 72 block matrices",
+  "optimizer1 = AdamW([embed.weight], [proj.weight], [p.ndim < 2], betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

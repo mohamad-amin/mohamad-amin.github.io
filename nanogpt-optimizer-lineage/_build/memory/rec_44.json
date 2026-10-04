@@ -1,0 +1,60 @@
+{
+  "id": 44,
+  "hidden_x": 11.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq in eigenbasis)",
+      "kind": "second_moment",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors (row_gg, col_gg)",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead buffer (EMA of per-step displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params snapshot",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 4.0,
+  "aux_note": "AdamW m and v on embedding and LM head, bias-correction-free Adam m and v on 1-D params, plus EMA-Nesterov prev_params and lookahead buffer on all of them",
+  "total_x": 7.66,
+  "notes": "SOAP-Muon on all 72 hidden matrices at freq 1 keeps fp32 exp_avg_sq, both Gram factors and both eigenbases per matrix (8.0×H on its own, since each MLP matrix's 3072-side factor is 4× the matrix); soap_basis_qr replaces the tensors each step, so no extra persistent copy. Circuit-Muon is removed, so all Muon/SOAP state is round-robin sharded again.",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "should_soap_param: return is_mlp_fc or is_mlp_proj or is_attn_proj or is_qkv (all hidden)",
+    "SOAP params: state[\"exp_avg_sq\"] = torch.zeros_like(p, dtype=torch.float32); state[\"row_gg\"] = torch.zeros(p.size(0), p.size(0)); state[\"col_gg\"] = torch.zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner: q_row/q_col = soap_eigenbasis(...) on first call, then soap_basis_qr every step (SOAP_PRECONDITION_FREQUENCY = 1) replacing q_row, q_col, exp_avg_sq",
+    "EMA_Nesterov.initialize_buffers (all model.parameters()): prev_params = (p.clone(), it); lookahead_buffer = (torch.zeros_like(p), -1)",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], fused=True); optimizer3 = Adam(1-D groups): state[\"exp_avg\"] = zeros_like(p), state[\"exp_avg_sq\"] = zeros_like(p, fp32)"
+  ]
+}

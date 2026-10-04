@@ -1,0 +1,70 @@
+{
+  "id": 45,
+  "hidden_x": 12.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq in eigenbasis)",
+      "kind": "second_moment",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors (row_gg, col_gg)",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead buffer (EMA of per-step displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params snapshot",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "Tail EMA of weights (τ=150)",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all non-embedding params (all 72 hidden matrices)",
+      "when": "late, from step 2000"
+    }
+  ],
+  "aux_x": 4.5,
+  "aux_note": "AdamW m and v on embedding and LM head, bias-correction-free Adam m and v on 1-D params, plus EMA-Nesterov prev_params and lookahead buffer on all of them; the tail EMA also covers the LM head and 1-D params (≈0.50 of A, embedding excluded)",
+  "total_x": 8.42,
+  "notes": "Same optimizer state as #44 plus one tail-EMA buffer (τ=150, clone of fp32 params) of all non-embedding params, kept from step 2000 to the 2720 stop and blended in place (p.lerp_(ema, 0.6)) at 2720. The default-off hooks allocate nothing in the logged runs (MUON_HISTORY_STEPS=0 returns before muon_history_buffer is created; readout anchor, TrailDelta and the tail-EMA sweep are off).",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "should_soap_param: return is_mlp_fc or is_mlp_proj or is_attn_proj or is_qkv (all hidden)",
+    "SOAP params: state[\"exp_avg_sq\"] = torch.zeros_like(p, dtype=torch.float32); state[\"row_gg\"] = torch.zeros(p.size(0), p.size(0)); state[\"col_gg\"] = torch.zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner: q_row/q_col = soap_eigenbasis(...) on first call, then soap_basis_qr every step (SOAP_PRECONDITION_FREQUENCY = 1) replacing q_row, q_col, exp_avg_sq",
+    "EMA_Nesterov.initialize_buffers (all model.parameters()): prev_params = (p.clone(), it); lookahead_buffer = (torch.zeros_like(p), -1)",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], fused=True); optimizer3 = Adam(1-D groups): state[\"exp_avg\"] = zeros_like(p), state[\"exp_avg_sq\"] = zeros_like(p, fp32)",
+    "maybe_update_tail_ema: tail_ema = {tau: {n: p.detach().clone() for n, p in tail_ema_scoped} for tau in TAIL_EMA_TAUS} at step 2000, then bufs[n].lerp_(p, 1/tau)",
+    "TAIL_EMA_TAUS default \"150\" (one buffer), TAIL_EMA_SCOPE \"nonembed\"; log: 'tail_ema initialized step:2000 taus:[150.0]', 'tail_ema applied step:2720'",
+    "apply_muon_history: if MUON_HISTORY_STEPS <= 0: return update (before state[\"muon_history_buffer\"] would be allocated)"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": 10,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "NorMuon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "NorMuon's second_momentum is an (m,1)/(1,n) vector per matrix, O(rows+cols), so it is ignored; the Muon class left in the file is never instantiated.",
+  "evidence": [
+    "NorMuon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "NorMuon.step: state[\"second_momentum\"] = torch.zeros_like(p.data[..., 0:1]) or p.data[0:1, ...] -- row/col vector, ignored",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

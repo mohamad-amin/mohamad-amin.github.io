@@ -1,0 +1,23 @@
+{
+  "id": 17,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "NorMuon-lite was dropped, so the momentum is the only Muon state; Aurora's row-diagonal D is an O(rows) vector recomputed from the momentum every step and never stored. Momentum is fp32; AdamW state on the bf16 embedding is bf16.",
+  "evidence": [
+    "Muon.step: if len(state) == 0: state[\"momentum\"] = torch.zeros_like(p) (the only state key)",
+    "aurora_orthogonalize: D = 1.0 / row_norm; D = D * (target_row_sq / row_sq).pow(pp_beta): local per-step vector",
+    "muon_update: normalized_grad = scale_to_unit_operator_norm(update.clone()): temporary within the step",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [p for p in model.parameters() if p.ndim < 2], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

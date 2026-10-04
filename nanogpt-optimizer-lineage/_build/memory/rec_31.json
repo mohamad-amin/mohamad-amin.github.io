@@ -1,0 +1,24 @@
+{
+  "id": 31,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muown direction momentum m_v",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "NorMuon-lite's fp32 second_moment, the per-row gains g, v_norm/v_norm_init and gain-Adam m_g/v_g are row/column vectors and are ignored. Contra-Muon's operator-norm direction comes from 5 power iterations on the current momentum each step and keeps no state.",
+  "evidence": [
+    "MuownDP._init_state_2d: state[\"m_v\"] = torch.zeros_like(p.data)",
+    "MuownDP._init_state_2d: state[\"second_moment\"] = torch.zeros((*p.shape[:-1], 1)) or ((1, n)), fp32 -- ignored",
+    "MuownDP._init_state_2d: state[\"g\"], [\"v_norm\"], [\"v_norm_init\"], [\"m_g\"], [\"v_g\"] -- (m,1), ignored",
+    "MuownDP.step: unit_op_dir = scale_to_unit_operator_norm(update_pre_ns) (temporary)",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

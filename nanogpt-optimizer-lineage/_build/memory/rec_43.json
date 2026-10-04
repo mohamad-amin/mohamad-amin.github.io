@@ -1,0 +1,103 @@
+{
+  "id": 43,
+  "hidden_x": 15.25,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq in eigenbasis)",
+      "kind": "second_moment",
+      "x": 0.75,
+      "applies_to": "36 matrices: 24 MLP (fc, proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors (row_gg, col_gg)",
+      "kind": "preconditioner",
+      "x": 3.0,
+      "applies_to": "36 matrices: 24 MLP (fc, proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 3.0,
+      "applies_to": "36 matrices: 24 MLP (fc, proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead buffer (EMA of per-step displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params snapshot",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "BroadDelta snapshot θ_2000",
+      "kind": "weight_copy",
+      "x": 0.833,
+      "applies_to": "48 muon_other matrices (q, k, mlp.fc, mlp.proj)",
+      "when": "late, from step 2000"
+    },
+    {
+      "name": "Final-readout anchor θ_2400",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all non-embedding params (all 72 hidden matrices)",
+      "when": "late, from step 2400"
+    },
+    {
+      "name": "TrailDelta reference snapshot",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all non-embedding params (all 72 hidden matrices)",
+      "when": "late, from step 2650"
+    },
+    {
+      "name": "TrailDelta momentum (previous pulse Δ, β=1)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all non-embedding params (all 72 hidden matrices)",
+      "when": "late, from step 2750"
+    },
+    {
+      "name": "Phase-readout snapshot θ_2650 (t0)",
+      "kind": "weight_copy",
+      "x": 0.833,
+      "applies_to": "48 muon_other matrices (q, k, mlp.fc, mlp.proj)",
+      "when": "late, from step 2650"
+    },
+    {
+      "name": "Phase-readout snapshot θ_2750 (t1)",
+      "kind": "weight_copy",
+      "x": 0.833,
+      "applies_to": "48 muon_other matrices (q, k, mlp.fc, mlp.proj)",
+      "when": "late, from step 2750"
+    }
+  ],
+  "aux_x": 5.5,
+  "aux_note": "AdamW m, v and EMA-Nesterov prev_params, lookahead on all aux params (4.0); the three non-embedding snapshots (anchor, TrailDelta reference, TrailDelta momentum) also cover the LM head and 1-D params (≈0.50 of A each, embedding excluded)",
+  "total_x": 10.6,
+  "notes": "Counts the run.sh configuration (BroadDelta and phase readout on muon_other; anchor, TrailDelta reference and beta=1 TrailDelta momentum on all non-embedding params); all are GPU clones that are never freed, so the peak 15.25×H holds from step 2750 to the end, with the BroadDelta snapshot still allocated after its only use at step 2400. Optimizer state is #41's unchanged, including Circuit-Muon's per-rank replication of V/O state; macro-accum/CEM buffers are off and the step-2000 checkpoint only writes to disk.",
+  "evidence": [
+    "Muon/SOAP/EMA_Nesterov allocation identical to #41 (state[\"momentum\"], exp_avg_sq, row_gg, col_gg, q_row, q_col; prev_params, lookahead_buffer)",
+    "maybe_capture_broad_delta: broad_delta_states[i] = {name: p.detach().clone() for broad_delta_in_scope} at step 2000, never reset to None",
+    "maybe_capture_final_readout_anchor: final_readout_anchor_state = {name: p.detach().clone()} (nonembed) at step 2400",
+    "maybe_apply_trail_delta_step: trail_delta_state = {name: p.detach().clone() for scoped} at 2650, re-cloned after each pulse",
+    "maybe_apply_trail_delta_step: trail_delta_momentum_state = zeros_like, then [name] = delta.detach().clone() (TRAIL_DELTA_MOMENTUM_BETA=1.0)",
+    "maybe_capture_phase_readout_anchor: phase_readout_t0_state / phase_readout_t1_state = clones of muon_other params at 2650 / 2750",
+    "run.sh + log: BROAD_DELTA_SCOPE=muon_other, FINAL_READOUT_SCOPE=nonembed, TRAIL_DELTA_SCOPE=nonembed, PHASE_READOUT_SCOPE=muon_other; 'broad_delta captured ... tensors:48', 'final_readout captured step:2400 tensors:172', 'phase_readout captured t0 step:2650 tensors:48'"
+  ]
+}

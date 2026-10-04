@@ -1,0 +1,61 @@
+{
+  "id": 40,
+  "hidden_x": 9.75,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment in the eigenbasis (exp_avg_sq)",
+      "kind": "second_moment",
+      "x": 0.75,
+      "applies_to": "36 SOAP matrices: 24 MLP (mlp.fc, mlp.proj) + 12 attn.v",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Gram factors row_gg + col_gg",
+      "kind": "preconditioner",
+      "x": 3.0,
+      "applies_to": "24 MLP matrices (3072² + 768² = 4.25× each) + 12 attn.v (768² + 768² = 2× each)",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases q_row + q_col",
+      "kind": "eigenbasis",
+      "x": 3.0,
+      "applies_to": "same 36 matrices (4.25× per MLP matrix, 2× per attn.v)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov lookahead_buffer (EMA γ=0.99 of per-step weight displacement)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    },
+    {
+      "name": "EMA-Nesterov prev_params (copy of last post-step weights)",
+      "kind": "weight_copy",
+      "x": 1.0,
+      "applies_to": "all parameters (all 72 hidden matrices)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 4.0,
+  "aux_note": "AdamW m and v (2.0) + EMA-Nesterov lookahead_buffer and prev_params, which wrap every parameter (2.0)",
+  "total_x": 7.01,
+  "notes": "Both EMA-Nesterov buffers are allocated at construction for every parameter and kept and updated for the whole run, although the lookahead is applied only in steps 300-1949; unlike the rank-sharded Muon/SOAP state they are replicated on all 8 ranks. Buffers match parameter dtype (fp32, bf16 for the embedding); NorMuon-lite row vectors (inert, NOR_BETA2=1.0) are ignored.",
+  "evidence": [
+    "Muon.step L628: state[\"momentum\"] = torch.zeros_like(p) for every Muon param (model.blocks ndim>=2, L926)",
+    "Muon.step L629-632: if p in soap_params (SOAP_PARAM_MODE=\"mlp_plus_v\" L96: mlp.fc, mlp.proj, attn.v) exp_avg_sq = zeros_like(p, fp32), row_gg = zeros(p.size(0), p.size(0)), col_gg = zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner L551-553: state[\"q_row\"], state[\"q_col\"] = soap_eigenbasis(row_gg / col_gg), replaced by soap_basis_qr every 10 steps",
+    "EMA_Nesterov.initialize_buffers L716-724 (from __init__): param_state['prev_params'] = (p.clone(), it); param_state['lookahead_buffer'] = (torch.zeros_like(p), -1)",
+    "L929: EMA_Nesterov([p for p in model.parameters()], [optimizer1, optimizer2], ...) -> buffers for every parameter; accum_lookahead L754-768 updates both after every step",
+    "Muon L637-642: state[\"second_moment\"] is (m,1) or (1,n) -> O(rows+cols), not counted",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [ndim<2 params], fused=True) L921-924 -> exp_avg + exp_avg_sq"
+  ]
+}

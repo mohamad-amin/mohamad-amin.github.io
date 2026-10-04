@@ -1,0 +1,29 @@
+{
+  "id": 7,
+  "hidden_x": 2.0,
+  "components": [
+    {
+      "name": "Muon momentum (mu=0.95)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "Muon² second moment v (beta2=0.95)",
+      "kind": "second_moment",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 2.0,
+  "notes": "Muon² adds an elementwise EMA of g² (no bias correction) next to the Muon momentum; both are fp32 zeros_like(p), allocated on the first step only on the rank that owns each matrix.",
+  "evidence": [
+    "rec_07.py:216-217 MuonSq.step: state[\"momentum\"] = torch.zeros_like(p); state[\"v\"] = torch.zeros_like(p)",
+    "rec_07.py:189-190 muon_sq_update: momentum.lerp_(grad, 1 - mu); v.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)",
+    "rec_07.py:284-285 optimizer2 = MuonSq(block 2-D params, lr=0.10, weight_decay=0.0125); :280-283 optimizer1 = AdamW(aux groups, fused=True)"
+  ]
+}

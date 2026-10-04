@@ -1,0 +1,46 @@
+{
+  "id": 14,
+  "hidden_x": 7.33,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq: EMA of squared momentum in the eigenbasis)",
+      "kind": "second_moment",
+      "x": 0.6667,
+      "applies_to": "24 MLP matrices (mlp.fc 3072×768, mlp.proj 768×3072)",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Kronecker factors (row_gg = EMA of GGᵀ, col_gg = EMA of GᵀG)",
+      "kind": "preconditioner",
+      "x": 2.8333,
+      "applies_to": "24 MLP matrices: 3072×3072 (4×) + 768×768 (0.25×) per matrix",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 2.8333,
+      "applies_to": "24 MLP matrices: 3072×3072 (4×) + 768×768 (0.25×) per matrix",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 4.79,
+  "notes": "All SOAP state is fp32 and dominated by the 3072×3072 side factor and basis of each MLP matrix (4× the matrix each); the eigenbases are created by eigh after the first update and soap_basis_qr's re-sorted copies are transient. NorMuon-lite's per-row/column vectors are O(rows) and ignored.",
+  "evidence": [
+    "Muon.__init__: soap_params = {p for n, p in named_params if n.endswith('.mlp.fc.weight') or n.endswith('.mlp.proj.weight')}",
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p) for every block matrix (model.blocks.parameters() with ndim >= 2)",
+    "Muon.step (p in self.soap_params): state[\"exp_avg_sq\"] = torch.zeros_like(p, dtype=torch.float32); state[\"row_gg\"] = torch.zeros(p.size(0), p.size(0)); state[\"col_gg\"] = torch.zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner: state[\"q_row\"/\"q_col\"] = soap_eigenbasis(row_gg/col_gg) (eigh, set after the first update), replaced by soap_basis_qr every 10 SOAP steps",
+    "Muon.step: state[\"second_moment\"] = torch.zeros((*p.shape[:-1], 1)) or (1, n): NorMuon-lite vector, O(rows), ignored",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [p for p in model.parameters() if p.ndim < 2], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

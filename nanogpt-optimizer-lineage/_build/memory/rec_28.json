@@ -1,0 +1,23 @@
+{
+  "id": 28,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Heavy-ball momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "fast_spectral's XX^T, E, E^2 and C matrices are rebuilt inside each step (temporaries) and the spectral power p is a scalar in the param group, so DynMuon keeps exactly Muon's state.",
+  "evidence": [
+    "DynMuon.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "dynmuon_update: momentum.mul_(mu).add_(grad / (8*64*1024)) -- the only persistent buffer",
+    "fast_spectral: A = Xn @ Xn.mT, E2 = E @ E, C = I + ... (temporaries)",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

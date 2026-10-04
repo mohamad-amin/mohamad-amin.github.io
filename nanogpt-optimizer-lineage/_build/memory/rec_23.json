@@ -1,0 +1,23 @@
+{
+  "id": 23,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muown direction momentum m_v",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "Muown's per-row gains g, v_norm/v_norm_init and the gain-Adam m_g/v_g are (m,1) vectors, O(rows), so they are ignored; v is rebuilt from W every step (temporary). Each of the 30 trials deletes its model and optimizers before the next, so state does not accumulate.",
+  "evidence": [
+    "MuownDP._init_state_2d: state[\"m_v\"] = torch.zeros_like(p.data)",
+    "MuownDP._init_state_2d: state[\"g\"], [\"v_norm\"], [\"v_norm_init\"] = w_norm.clone(); state[\"m_g\"], [\"v_g\"] = torch.zeros_like(w_norm) -- (m,1), ignored",
+    "_wn_pre_ns: v = (W / g) * v_norm (temporary, recomputed each step)",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

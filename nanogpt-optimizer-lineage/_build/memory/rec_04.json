@@ -1,0 +1,30 @@
+{
+ "id": 4,
+ "hidden_x": 2.0,
+ "components": [
+  {
+   "name": "AdamH first moment (exp_avg)",
+   "kind": "momentum",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  },
+  {
+   "name": "AdamH second moment (exp_avg_sq)",
+   "kind": "second_moment",
+   "x": 1.0,
+   "applies_to": "all 72 hidden matrices",
+   "when": "always"
+  }
+ ],
+ "aux_x": 2.0,
+ "aux_note": "AdamW (fused) m and v on embedding, LM head and 1-D params",
+ "total_x": 2.0,
+ "notes": "Both AdamH moments are fp32 (zeros_like of the fp32 hidden weights), and AdamH is not rank-sharded, so every GPU holds the full 2× hidden state; the AdamW state of the bf16 embedding is bf16.",
+ "evidence": [
+  "AdamH.step: state[\"exp_avg\"] = torch.zeros_like(p)",
+  "AdamH.step: state[\"exp_avg_sq\"] = torch.zeros_like(p)",
+  "optimizer2 = AdamH([p for p in model.blocks.parameters() if p.ndim >= 2], ...): all 72 block matrices, looped on every rank",
+  "optimizer1 = AdamW([embed.weight], [proj.weight], [p.ndim < 2], betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq per aux param"
+ ]
+}

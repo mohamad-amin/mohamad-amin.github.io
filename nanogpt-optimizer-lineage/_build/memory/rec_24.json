@@ -1,0 +1,23 @@
+{
+  "id": 24,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "Same optimizer state as #11 (the diff vs #11 touches only train_steps, extra_val_steps and the per-group cooldown_frac); NorMuon-lite's per-row/column vectors are O(rows) and ignored. Momentum is fp32; AdamW state on the bf16 embedding is bf16.",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p) for every block matrix (model.blocks.parameters() with ndim >= 2)",
+    "Muon.step: state[\"second_moment\"] = torch.zeros((*p.shape[:-1], 1)) or (1, n): NorMuon-lite vector, O(rows), ignored",
+    "set_hparams: per-group group[\"cooldown_frac\"] (0.4 AdamW / 0.8 Muon) is a scalar, no tensor state",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [p for p in model.parameters() if p.ndim < 2], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

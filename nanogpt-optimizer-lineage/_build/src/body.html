@@ -9,6 +9,7 @@
       <button role="tab" data-view="outline" aria-selected="false">Outline<kbd>2</kbd></button>
       <button role="tab" data-view="timeline" aria-selected="false">Timeline<kbd>3</kbd></button>
       <button role="tab" data-view="genome" aria-selected="false">Genome<kbd>4</kbd></button>
+      <button role="tab" data-view="memory" aria-selected="false">Memory<kbd>5</kbd></button>
     </nav>
     <div class="tools">
       <div class="search">
@@ -50,9 +51,11 @@
         </div>
       </div>
       <div class="view view-genome" id="view-genome" hidden></div>
+      <div class="view view-memory" id="view-memory" hidden></div>
       </div>
       <div class="legend" id="legend"></div>
     </section>
+    <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0" title="Drag to resize · double-click to reset"></div>
     <aside class="inspector" id="inspector" aria-live="polite"></aside>
   </main>
 
@@ -90,6 +93,8 @@
       <h3>The significance numbers</h3>
       <p><b>Validity margin</b> is the benchmark's rule, (3.28 − mean)·√n, which must reach 0.004 (a one-sided z-test at σ = 0.0013, p &lt; 0.001).</p>
       <p><b>Pairwise vs parent</b> applies the README's comparison rule: ((loss<sub>parent</sub> − loss) + Δsteps·0.0045/100) / √(1/n₁ + 1/n₂). It reaches 0.004 only when the logs prove the child really is better. <b>Effective step gain</b> converts the loss difference into steps at 0.0045 loss per 100 steps, so a record that saves 25 steps but ends 0.0014 higher in loss shows a gain of about −6.</p>
+      <h3>Optimizer memory</h3>
+      <p><b>Memory</b> is the optimizer-side state kept for each hidden-matrix weight, in multiples of those weights: Muon's momentum is 1×, Adam's two moments are 2×, Kronecker methods such as SOAP add factor and eigenbasis matrices (a 3072-wide side alone is 4× its matrix), and wrappers add weight copies such as EMAs or snapshots. Row or column statistics, scalars and per-step temporaries are ignored. The embedding, LM head and 1-D parameters use AdamW (2×) in nearly every record, so they are reported separately; the whole-model figure includes them.</p>
       <h3>Diffs</h3>
       <p>Code diffs are structure-aware. Functions, classes and per-section code are matched by name, so a moved function shows as unchanged and a renamed one as renamed. Lines are aligned with a patience diff, and changed tokens within a line are highlighted.</p>
       <h3>Keyboard</h3>
@@ -100,7 +105,7 @@
         <kbd class="k">Shift + click</kbd><span>Compare the selected record with another one</span>
         <kbd class="k">c</kbd><span>Compare with parent (press again to leave compare)</span>
         <kbd class="k">d</kbd><span>Open the code diff</span>
-        <kbd class="k">1 – 4</kbd><span>Tree, Outline, Timeline, Genome</span>
+        <kbd class="k">1 – 5</kbd><span>Tree, Outline, Timeline, Genome, Memory</span>
         <kbd class="k">f</kbd><span>Fit the tree to the screen</span>
         <kbd class="k">/</kbd><span>Search</span>
         <kbd class="k">Esc</kbd><span>Close overlays, leave compare, clear a lens</span>

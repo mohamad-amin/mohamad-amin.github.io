@@ -1,0 +1,31 @@
+{
+  "id": 26,
+  "hidden_x": 4.5,
+  "components": [
+    {
+      "name": "Nesterov momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "EMA Gram matrices left_gram (m x m, GG^T) and right_gram (n x n, G^T G)",
+      "kind": "preconditioner",
+      "x": 3.5,
+      "applies_to": "all 72 hidden matrices: 2 x 768x768 per attention matrix, 3072x3072 + 768x768 per MLP matrix",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 3.31,
+  "notes": "The Grams are fp32; the eigenbases U, V come from a fresh torch.linalg.eigh every step and are local variables, so they are temporaries, not state. The NorMuon postconditioner's second_momentum ((m,1)/(1,n)) is O(rows+cols) and ignored.",
+  "evidence": [
+    "SinkSOAP.step: state[\"momentum\"] = torch.zeros_like(p)",
+    "SinkSOAP.step: state[\"left_gram\"] = torch.zeros((m, m), dtype=float32); state[\"right_gram\"] = torch.zeros((n, n), dtype=float32)",
+    "gram_sinkhorn_normuon_update: U = gram_eigenbasis(left_gram); V = gram_eigenbasis(right_gram) -- recomputed, not stored",
+    "SinkSOAP.step: state[\"second_momentum\"] = torch.zeros((m, 1)) or ((1, n)) -- row/col vector, ignored",
+    "optimizer1 = AdamW([embed.weight, proj.weight, 1-D params], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

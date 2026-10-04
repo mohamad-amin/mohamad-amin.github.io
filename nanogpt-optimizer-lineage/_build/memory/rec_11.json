@@ -1,0 +1,23 @@
+{
+  "id": 11,
+  "hidden_x": 1.0,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 1.48,
+  "notes": "Contra-Muon's spectrally normalized momentum copy is a per-step temporary and NorMuon-lite's per-row/column variance EMA is an O(rows) vector, so neither is counted. Momentum is fp32 (hidden weights are fp32); AdamW state on the bf16 embedding is bf16.",
+  "evidence": [
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p) for every block matrix (model.blocks.parameters() with ndim >= 2)",
+    "Muon.step: state[\"second_moment\"] = torch.zeros((*p.shape[:-1], 1)) or (1, n): NorMuon-lite vector, O(rows), ignored",
+    "muon_update: normalized_grad = scale_to_unit_operator_norm(update.clone()): temporary within the step",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [p for p in model.parameters() if p.ndim < 2], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}

@@ -225,6 +225,9 @@ def main():
     line_ix = {}
     lines = []
     analysis_dir = os.path.join(WORK, "analysis_final")
+    plain_path = os.path.join(WORK, "plain.json")
+    PLAIN = json.load(open(plain_path)) if os.path.exists(plain_path) else {}
+    mem_dir = os.path.join(WORK, "memory")
     techs = {t[0]: dict(id=t[0], label=t[1], cat=t[2], desc=t[3]) for t in TECH}
     records = []
     for i in sorted(R):
@@ -263,6 +266,8 @@ def main():
                 if t.get("id") and t["id"] not in techs:
                     techs[t["id"]] = dict(id=t["id"], label=t["id"].replace("_", " "), cat="geometry", desc="")
         curve = [[c[0], c[1], c[2], c[3]] for c in r["curve"] if c[0] > 0]
+        mp = os.path.join(mem_dir, f"rec_{i:02d}.json")
+        mem = json.load(open(mp)) if os.path.exists(mp) else None
         records.append(dict(
             id=i, steps=r["steps"], wr=r["wr"], valid=r["valid"], mean=r["readme_mean"], n=r["readme_n"],
             date=r["date"], desc=sanitize(md[f"inline:desc:{i}"], "records/track_3_optimization/"),
@@ -276,7 +281,7 @@ def main():
             seeds=[round(x, 5) for x in r["seeds_at"]],
             curve=curve, code=idx, blocks=blocks,
             sections=[[s["line"], s["title"]] for s in st["sections"]],
-            docs=docs, an=an,
+            docs=docs, an=an, pl=PLAIN.get(str(i)), mem=mem,
         ))
     data = dict(
         meta=dict(commit=COMMIT, source="https://github.com/KellerJordan/modded-nanogpt/tree/master/records/track_3_optimization",

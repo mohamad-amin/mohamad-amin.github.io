@@ -27,6 +27,8 @@ in the page, with the recomputed ones noted when they differ).
 | - | - |
 | `lineage.py` | Parent of every record (declared in the README, or inferred from code + chronology) and borrowed-idea links |
 | `analysis/rec_XX.json` | Per-record annotations: change summary vs parent, technique genome, hyperparameters, mechanisms, caveats. Written by reading each script and its diff against its parent, following `BRIEF.md` |
+| `plain.json` | A one-sentence plain-English summary and 2–4 plain bullets per record, shown first in the side panel |
+| `memory/rec_XX.json` | Optimizer-state memory per record: multiples of the hidden-matrix parameter count with a component breakdown, the auxiliary-parameter state and the whole-model figure. Counted from the code following `MEMORY_BRIEF.md` |
 | `reconcile.py` | Applies one set of tagging rules across all records and recomputes each edge's added/removed techniques from the genomes |
 | `structure.py` | Splits a script into sections, functions, classes and per-section code, which the structure-aware diff matches by name |
 | `build.py` | Code-line dictionary, block structure, curves, sanitized docs, families and taxonomy → `data.json` |
@@ -36,5 +38,5 @@ in the page, with the recomputed ones noted when they differ).
 
 1. Pull the latest modded-nanogpt and re-run `extract.py`. New rows of the README table are picked up automatically.
 2. Add the record's parent to `lineage.py`.
-3. Write `analysis/rec_XX.json` following the schema in `BRIEF.md`.
+3. Write `analysis/rec_XX.json` following the schema in `BRIEF.md`, `memory/rec_XX.json` following `MEMORY_BRIEF.md`, and add the record to `plain.json`.
 4. If the record belongs to a new family, add it to `FAMILY_OF` in `build.py`. Then run the rest of the steps above.

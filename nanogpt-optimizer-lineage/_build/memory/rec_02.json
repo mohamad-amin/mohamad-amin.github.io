@@ -1,0 +1,29 @@
+{
+  "id": 2,
+  "hidden_x": 2.0,
+  "components": [
+    {
+      "name": "AdamW exp_avg (beta1=0.9)",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "AdamW exp_avg_sq (beta2=0.95)",
+      "kind": "second_moment",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 2.0,
+  "notes": "The hidden matrices use torch fused AdamW with amsgrad off, so only exp_avg and exp_avg_sq exist (fp32, replicated on every rank because each rank steps every matrix); the leftover Muon class is never instantiated, so no momentum_buffer is allocated.",
+  "evidence": [
+    "rec_02.py:287-289 optimizer2 = AdamW(block 2-D params, lr=0.0015, betas=(0.9, 0.95), eps=1e-10, weight_decay=0.10, fused=True): torch AdamW allocates state['exp_avg'] and state['exp_avg_sq'] (zeros_like(p)) per hidden matrix",
+    "rec_02.py:283-286 optimizer1 = AdamW(embed / head / ndim<2 groups, betas=(0.8, 0.95), fused=True): exp_avg + exp_avg_sq",
+    "rec_02.py:214 state['momentum_buffer'] exists only inside the unused Muon class"
+  ]
+}

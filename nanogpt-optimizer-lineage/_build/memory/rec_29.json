@@ -1,0 +1,47 @@
+{
+  "id": 29,
+  "hidden_x": 7.75,
+  "components": [
+    {
+      "name": "Muon momentum",
+      "kind": "momentum",
+      "x": 1.0,
+      "applies_to": "all 72 hidden matrices",
+      "when": "always"
+    },
+    {
+      "name": "SOAP second moment (exp_avg_sq: EMA of squared momentum in the eigenbasis)",
+      "kind": "second_moment",
+      "x": 0.75,
+      "applies_to": "36 matrices: 24 MLP 0.6667 + 12 attn.v 0.0833",
+      "when": "always"
+    },
+    {
+      "name": "SOAP Kronecker factors (row_gg = EMA of GGᵀ, col_gg = EMA of GᵀG)",
+      "kind": "preconditioner",
+      "x": 3.0,
+      "applies_to": "36 matrices: 24 MLP 2.8333 (3072² + 768² each) + 12 attn.v 0.1667 (768² + 768² each)",
+      "when": "always"
+    },
+    {
+      "name": "SOAP eigenbases (q_row, q_col)",
+      "kind": "eigenbasis",
+      "x": 3.0,
+      "applies_to": "36 matrices: 24 MLP 2.8333 (3072² + 768² each) + 12 attn.v 0.1667 (768² + 768² each)",
+      "when": "always"
+    }
+  ],
+  "aux_x": 2.0,
+  "aux_note": "AdamW m and v on embedding, LM head and 1-D params",
+  "total_x": 5.01,
+  "notes": "Identical to #20: the radial brake and post-step radius pin compute only scalars and per-step temporaries, and Soft-Muon's 13 NS iterates are freed after each step. All SOAP state is fp32; NorMuon-lite's per-row/column vectors are O(rows) and ignored.",
+  "evidence": [
+    "should_soap_param: SOAP_PARAM_MODE = \"mlp_plus_v\" -> mlp.fc, mlp.proj, attn.v weights (unchanged from #20)",
+    "Muon.step: state[\"momentum\"] = torch.zeros_like(p) for every block matrix (model.blocks.parameters() with ndim >= 2)",
+    "Muon.step (p in self.soap_params): state[\"exp_avg_sq\"] = torch.zeros_like(p, dtype=torch.float32); state[\"row_gg\"] = torch.zeros(p.size(0), p.size(0)); state[\"col_gg\"] = torch.zeros(p.size(1), p.size(1))",
+    "soap_update_preconditioner: state[\"q_row\"/\"q_col\"] = soap_eigenbasis(row_gg/col_gg) (eigh, set after the first update), replaced by soap_basis_qr every 10 SOAP steps",
+    "scale_radial_update / target_radius_after_update / rescale_to_radius: scalar coeff, temporaries and an in-place p.mul_, no buffers",
+    "Muon.step: state[\"second_moment\"] = torch.zeros((*p.shape[:-1], 1)) or (1, n): NorMuon-lite vector, O(rows), ignored",
+    "optimizer1 = AdamW([embed.weight], [proj.weight], [p for p in model.parameters() if p.ndim < 2], fused=True): exp_avg + exp_avg_sq per param"
+  ]
+}
