@@ -1,0 +1,102 @@
+{
+  "id": 3,
+  "parent": 1,
+  "short_name": "Muon lr/wd ×1.25",
+  "edge": {
+    "title": "Muon lr 0.02→0.025 and wd 0.01→0.0125; 3500 steps",
+    "summary": "Hyperparameter-only retune of #1: Muon lr and weight decay are both scaled by 1.25 (lr=0.025, wd=0.0125), raising the per-step decoupled shrinkage lr·wd from 2e-4 to 3.1e-4 at peak, and the run is shortened by 100 steps to 3500. Optimizer code, aux AdamW, schedule and init are unchanged; evidence is one pre-rules run.",
+    "changes": [
+      {
+        "type": "tuned",
+        "label": "Muon lr/wd scaled ×1.25",
+        "detail": "optimizer2 = Muon(lr=muon_lr, weight_decay=muon_weight_decay) with muon_lr=0.025, muon_weight_decay=0.0125 (was 0.02/0.01); lr·wd rises from 2e-4 to 3.125e-4 per step at peak.",
+        "symbols": ["muon_lr", "muon_weight_decay", "optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3600 → 3500",
+        "detail": "Claimed step equals the scheduled end (single run, 3.2767 at 3500).",
+        "symbols": ["train_steps"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.lr",
+        "label": "Muon lr",
+        "from": "0.02",
+        "to": "0.025"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "Muon wd",
+        "from": "0.01",
+        "to": "0.0125"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3600",
+        "to": "3500"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3600",
+        "to": "3500"
+      }
+    ],
+    "techniques_added": [],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "Consistent: the diff vs #1 touches only train_steps and the Muon lr/wd.",
+    "noise": "The values are hoisted into module constants muon_lr / muon_weight_decay (later scripts inline the literals again)."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "lr 0.025, wd 0.0125, mu 0.95 Nesterov, NS 12 iters (2,-1.5,0.5)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3500 steps"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "as #1: all 'proj' params (incl. LM head) zeroed"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3500",
+    "steps.claimed": "3500",
+    "hidden.optimizer": "Muon",
+    "hidden.lr": "0.025",
+    "hidden.wd": "0.0125",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "torch default nn.Linear U(±1/sqrt(fan_in)), std ≈ 0.0208 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "torch default U(±1/sqrt(fan_in)) for q/k/v/fc; proj biases zero",
+    "init.gains": "1"
+  },
+  "mechanisms": [],
+  "caveats": "Single run (3.2767, n=1) recorded before the significance rule (README: 'My first three results failed to follow this rule'); 3.28 − 3.2767 = 0.0033 < 0.004. Git history shows this config (with the literals inlined) was the train_gpt_simple.py baseline from 2026-04-26 until the #6 refactor.",
+  "new_technique_ids": []
+}

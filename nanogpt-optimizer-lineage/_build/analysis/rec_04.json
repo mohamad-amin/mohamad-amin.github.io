@@ -1,0 +1,265 @@
+{
+  "id": 4,
+  "parent": 1,
+  "short_name": "AdamH (hyperball)",
+  "edge": {
+    "title": "Muon→AdamH: Adam direction applied on a fixed-norm hyperball",
+    "summary": "All 72 hidden block matrices switch from Muon + weight decay to AdamH: a bias-corrected Adam direction m̂/(√v̂+1e-8) (betas 0.9/0.95) is rescaled to Frobenius norm lr·‖W‖_F, subtracted, and W is renormalized back to its pre-step norm, so every hidden matrix stays on a sphere of its init radius and weight decay is dropped. Because a zero matrix would be stuck at radius 0, the residual projections are no longer zero-initialized: attn.proj, mlp.proj and mlp.fc get ×1.25, ×3.0 and ×1.5 the default Kaiming-uniform init. The hidden lr (0.018) warms up linearly over 250 steps and otherwise decays linearly to 0 over the whole run, while aux AdamW (unchanged LRs) cools down over the last 40%; the run needs 4875 steps.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "AdamH hidden-matrix direction",
+        "detail": "AdamH.step keeps per-element exp_avg/exp_avg_sq (betas (0.9, 0.95)) with bias correction and forms update = m̂/(√v̂ + 1e-8), replacing Muon's Nesterov momentum + Newton–Schulz for every block matrix.",
+        "symbols": [
+          "AdamH"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Hyperball (norm-preserving) step",
+        "detail": "scale_invariant_update_: W' = W − lr·U·‖W‖/max(‖U‖,1e-10), then W ← W'·‖W‖/max(‖W'‖,1e-10); the pre-retraction step is exactly lr·‖W‖_F and ‖W‖_F never changes, so hidden weight decay (0.01) is removed.",
+        "symbols": [
+          "scale_invariant_update_"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Non-zero per-module init",
+        "detail": "Default nn.Linear init is kept and scaled: attn.proj.weight ×1.25, mlp.proj.weight ×3.0, mlp.fc.weight ×1.5 (q/k/v ×1). Only the LM head proj.weight and the 'proj' biases are zeroed; #1 zeroed every 'proj' parameter, incl. both residual projections.",
+        "symbols": [
+          "init loop over model.named_parameters()"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Hidden-only 250-step LR warmup",
+        "detail": "set_hparams gives the 'h' (AdamH) group eta = step/250 for step < h_warmup_steps = 250; aux AdamW has no warmup.",
+        "symbols": [
+          "set_hparams",
+          "h_warmup_steps"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Split cooldown: hidden 1.0, aux 0.4",
+        "detail": "After warmup the hidden multiplier is 1 − step/4875 (cooldown_frac 1.0, so warmup lands on the decay line at ≈0.95); aux AdamW stays flat for 60% and decays linearly over the last 40% (was one shared cooldown_frac 0.7).",
+        "symbols": [
+          "set_hparams",
+          "schedule_type"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3600→4875, lr 0.02→0.018",
+        "detail": "train_steps = 4875 and matrix_lr = 0.018 for AdamH; aux AdamW groups (0.3, 1/320, 0.01) unchanged.",
+        "symbols": [
+          "train_steps",
+          "matrix_lr"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Unsharded optimizer + logging",
+        "detail": "AdamH loops over all params on every rank (no rank sharding / all_gather, no torch.compile); docstring and a device-name log line added.",
+        "symbols": [
+          "AdamH.step"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3600",
+        "to": "4875"
+      },
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "AdamH"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.02",
+        "to": "0.018"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "hidden weight decay",
+        "from": "0.01",
+        "to": "0 (hyperball)"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "hidden momentum / beta1",
+        "from": "0.95 (Nesterov)",
+        "to": "0.9 (Adam beta1)"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "hidden beta2",
+        "from": "—",
+        "to": "0.95"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "hidden eps",
+        "from": "—",
+        "to": "1e-8"
+      },
+      {
+        "key": "schedule.warmup_steps",
+        "label": "hidden warmup",
+        "from": "0",
+        "to": "250"
+      },
+      {
+        "key": "schedule.hidden_cooldown_frac",
+        "label": "hidden cooldown_frac",
+        "from": "0.7",
+        "to": "1.0"
+      },
+      {
+        "key": "schedule.aux_cooldown_frac",
+        "label": "aux cooldown_frac",
+        "from": "0.7",
+        "to": "0.4"
+      },
+      {
+        "key": "init.proj",
+        "label": "proj init",
+        "from": "all 'proj' params zero",
+        "to": "LM head + proj biases zero; attn.proj ×1.25, mlp.proj ×3.0 default init"
+      },
+      {
+        "key": "per_module_init_std.mlp_fc",
+        "label": "mlp.fc init",
+        "from": "default",
+        "to": "×1.5 (std ≈ 0.031)"
+      }
+    ],
+    "techniques_added": [
+      "adam_hidden",
+      "hyperball",
+      "per_module_init_std",
+      "lr_warmup",
+      "split_cooldown"
+    ],
+    "techniques_removed": [
+      "muon",
+      "zero_proj_init"
+    ],
+    "techniques_modified": [
+      "linear_cooldown"
+    ],
+    "parent_check": "consistent — nearest code is #1 (149 changed lines); sibling of #5 (same author) with the identical hyperball helper and init multipliers.",
+    "noise": "Docstring rewrite, an extra device-name print, and dropping Muon's rank-sharded loop (AdamH runs redundantly on every rank) do not change the math."
+  },
+  "techniques": [
+    {
+      "id": "adam_hidden",
+      "note": "AdamH on all 72 block matrices: betas (0.9, 0.95), eps 1e-8, bias-corrected, no wd"
+    },
+    {
+      "id": "hyperball",
+      "note": "each block matrix pinned to its init ‖W‖_F; step = lr·‖W‖ along U/‖U‖, then renormalize"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default Kaiming-uniform × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; q/k/v ×1"
+    },
+    {
+      "id": "lr_warmup",
+      "note": "hidden group only: eta = step/250 for the first 250 steps"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "hidden: linear to 0 over the whole run (frac 1.0); aux: last 40%"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "aux AdamW cooldown_frac 0.4 vs hidden 1.0"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "4875",
+    "steps.claimed": "4875",
+    "hidden.optimizer": "AdamH (Adam direction + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball fixes ‖W‖)",
+    "hidden.momentum": "0.9 (Adam beta1)",
+    "hidden.beta2": "0.95",
+    "hidden.eps": "1e-8",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "hidden: 250-step linear warmup, else 1 − step/4875; aux: flat then linear",
+    "schedule.warmup_steps": "250 (hidden only)",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "hyperball.radius": "per-matrix ‖W‖_F at init (expected ≈16 q/k/v, 20 attn.proj, 48 mlp.fc & mlp.proj)",
+    "hyperball.eps": "1e-10",
+    "init.hidden_std": "nn.Linear default Kaiming-uniform, std 1/√(3·fan_in) ≈ 0.0208 (q/k/v)",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero",
+    "init.bias": "proj biases 0; q/k/v/fc biases default uniform ±1/√fan_in"
+  },
+  "mechanisms": [
+    {
+      "id": "hyperball",
+      "name": "Hyperball (Frobenius-sphere) step",
+      "explain": "scale_invariant_update_ takes the optimizer direction U, rescales it to Frobenius norm lr·‖W‖_F (only U's direction survives), subtracts it, and rescales the result back to the pre-step norm ‖W‖_F. Each hidden matrix therefore stays on a sphere whose radius is its norm at initialization: lr is a relative step, the radial part of U is cancelled by the renormalization, and the net move is an angle of about lr along U's tangential component. This replaces weight decay as the norm control.",
+      "symbols": [
+        "scale_invariant_update_"
+      ]
+    },
+    {
+      "id": "adam_hidden",
+      "name": "AdamH direction",
+      "explain": "AdamH keeps standard per-element Adam moments (beta1 0.9, beta2 0.95, bias-corrected, eps 1e-8) for every block matrix and hands m̂/(√v̂+eps) to the hyperball step instead of applying it additively. There is no weight decay, and because the step is renormalized, only the direction of the Adam update matters.",
+      "symbols": [
+        "AdamH"
+      ]
+    },
+    {
+      "id": "per_module_init_std",
+      "name": "Per-module init multipliers",
+      "explain": "Starting from PyTorch's default nn.Linear init (uniform, std 1/√(3·fan_in)), attn.proj is scaled ×1.25, mlp.proj ×3.0 and mlp.fc ×1.5 (std ≈ 0.026/0.031/0.031) while q/k/v keep std ≈ 0.0208. Since the hyperball freezes each matrix's norm, these multipliers fix the radii for the whole run (expected ‖W‖_F ≈ 16 for q/k/v, 20 for attn.proj, 48 for mlp.fc and mlp.proj).",
+      "symbols": [
+        "init loop over model.named_parameters()"
+      ]
+    },
+    {
+      "id": "lr_warmup",
+      "name": "Hidden-group LR warmup",
+      "explain": "For step < 250 the hidden lr multiplier is step/250 (0 at step 0). After that it is 1 − step/4875, so the warmup ramps into an already-decaying line (≈0.95 at step 250) rather than a plateau.",
+      "symbols": [
+        "set_hparams",
+        "h_warmup_steps"
+      ]
+    },
+    {
+      "id": "split_cooldown",
+      "name": "Split cooldown",
+      "explain": "Param groups are tagged schedule_type 'h' or 'aux'. Hidden matrices use cooldown_frac 1.0 (linear decay over the entire run), while the AdamW embed/head/scalar groups stay flat for 60% and decay linearly to 0 over the last 40%.",
+      "symbols": [
+        "set_hparams",
+        "schedule_type"
+      ]
+    }
+  ],
+  "caveats": "Radii (≈16/20/48) are expected Frobenius norms implied by the init std, not constants in the code. The first hidden step has lr 0 (warmup starts at eta = 0), so AdamH's first call only seeds its moments.",
+  "new_technique_ids": []
+}

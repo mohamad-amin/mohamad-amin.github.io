@@ -1,0 +1,143 @@
+{
+  "id": 43,
+  "parent": 41,
+  "short_name": "TrailDelta + readouts",
+  "edge": {
+    "title": "Fixed late weight pulses (Trail/BroadDelta) + phase & anchor readouts",
+    "summary": "Keeps #41's optimizer (incl. Circuit-Muon) unchanged and adds fixed, validation-free late-trajectory weight edits, with the run shortened to 2850 steps (configuration from run.sh; see caveats). BroadDelta moves q/k/mlp matrices 0.5% back along their 2000→2400 displacement at step 2400; TrailDelta snapshots all non-embedding weights at 2650 and pulls back along the trailing 100-step displacement at 2750 (γ=−0.04) and 2850 (γ=−0.12, with β=1 momentum adding the previous Δ), so the 2400 and 2750 pulses edit live weights mid-training. At the final eval a normalized orthogonal 'phase' term (κ=0.01) is added on q/k/mlp, then all non-embedding weights move 8% toward the step-2400 anchor. The PowerCool horizon becomes 2950 but switches to 3010 at step 2600 (Muon LR jumps ×1.20), so training ends un-annealed (~3.9% of peak LR vs ~1.7% in #41) and the backward pulses/readouts provide the final smoothing.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "TrailDelta momentum pulses",
+        "detail": "Captures non-embedding params at 2650; at 2750 θ += −0.04·Δ and at 2850 θ += −0.12·(Δ + 1.0·Δ_prev), where Δ = θ − last reference (re-captured after each pulse); optimizer and EMA-Nesterov state are not touched.",
+        "symbols": ["maybe_apply_trail_delta_step", "TRAIL_DELTA_GAMMA_FIRST", "TRAIL_DELTA_GAMMA_FINAL", "TRAIL_DELTA_MOMENTUM_BETA"]
+      },
+      {
+        "type": "added",
+        "label": "Final anchor readout (8% to step 2400)",
+        "detail": "Stores non-embedding params at step 2400 (after the BroadDelta pulse); right before the step-2850 validation applies θ += 0.08·(θ_2400 − θ).",
+        "symbols": ["maybe_capture_final_readout_anchor", "apply_final_readout_alpha", "maybe_apply_final_readout", "FINAL_READOUT_ALPHA"]
+      },
+      {
+        "type": "added",
+        "label": "BroadDelta pulse on muon_other",
+        "detail": "q, k, mlp.fc, mlp.proj (attn.v/attn.proj excluded; 48 tensors) are captured at 2000 and at 2400 moved by −0.005·(θ − θ_2000), editing live weights mid-training.",
+        "symbols": ["maybe_capture_broad_delta", "maybe_apply_broad_delta", "BROAD_DELTA_SCHEDULE"]
+      },
+      {
+        "type": "added",
+        "label": "Orthogonal phase readout",
+        "detail": "Snapshots muon_other at 2650 (θ0) and 2750 (θ1); at the final eval v = θ − θ1, a = v − (θ1 − θ0), phase = a − proj_v(a) rescaled to ‖v‖ per tensor, θ += 0.01·phase (γ = 0), applied before the anchor readout.",
+        "symbols": ["maybe_capture_phase_readout_anchor", "maybe_apply_phase_readout", "PHASE_READOUT_KAPPA", "PHASE_READOUT_NORMALIZE_PHASE"]
+      },
+      {
+        "type": "modified",
+        "label": "2850 steps + tail LR horizon switch",
+        "detail": "train_steps 2900→2850; PowerCool t_end 2980→2950, switched to 3010 from step 2600 by _active_schedule_steps (LR ×1.20 at 2600; final Muon LR ≈1.5e-3 vs ≈6.5e-4).",
+        "symbols": ["_active_schedule_steps", "TAIL_SCHEDULE_SWITCH_STEP", "TAIL_SCHEDULE_STEPS", "FINAL_SCHEDULE_STEPS", "FINAL_TRAIN_STEPS"]
+      },
+      {
+        "type": "tuned",
+        "label": "Step-keyed windows shift with 2850",
+        "detail": "EMA-Nesterov rest_steps = train_steps − 950 gives a lookahead window of 300–1900 (was 1950); the 100-step μ cooldown now spans 2750–2850.",
+        "symbols": ["EMA_NESTEROV_REST_STEPS", "MU_COOLDOWN_STEPS", "_muon_mu_at_step"]
+      },
+      {
+        "type": "refactor",
+        "label": "Env plumbing, checkpoints, eval control",
+        "detail": "Most constants become env-overridable; adds checkpoint save/load, macro-accumulation and CEM search (off), final-readout alpha grid (off) and dense-eval controls (the run evaluates only at step 2850).",
+        "symbols": ["MACRO_ACCUM_MODE", "MACRO_CEM_MODE", "maybe_save_checkpoint", "FINAL_READOUT_ALPHA_GRID"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "steps.scheduled", "label": "train_steps", "from": "2900", "to": "2850"},
+      {"key": "steps.claimed", "label": "Claimed step", "from": "2875", "to": "2850"},
+      {"key": "schedule.end_step", "label": "PowerCool t_end", "from": "2980", "to": "2950; 3010 from step 2600"},
+      {"key": "ema_nesterov.window", "label": "Lookahead window", "from": "300–1950", "to": "300–1900"},
+      {"key": "mu_schedule.cooldown", "label": "μ cooldown window", "from": "2800–2900", "to": "2750–2850"},
+      {"key": "trail_delta.pulses", "label": "TrailDelta", "from": "—", "to": "ref 2650; 2750 γ=−0.04; 2850 γ=−0.12; β=1.0; nonembed"},
+      {"key": "trail_delta.broad", "label": "BroadDelta", "from": "—", "to": "2000→2400, γ=−0.005, muon_other"},
+      {"key": "phase_readout.kappa", "label": "Phase readout κ", "from": "—", "to": "0.01 (t0 2650, t1 2750, orthogonal, normalized)"},
+      {"key": "anchor_readout.alpha", "label": "Anchor readout α", "from": "—", "to": "0.08 toward step-2400 anchor (nonembed)"}
+    ],
+    "techniques_added": ["trail_delta", "phase_readout", "anchor_readout"],
+    "techniques_removed": ["early_stop"],
+    "techniques_modified": ["powercool", "ema_nesterov", "mu_schedule"],
+    "parent_check": "consistent: the Muon/SOAP/Circuit-Muon code and all #41 constants are unchanged; the docstring describes the base as PR311 (#41) plus the author's own 2850-step TrailDelta/final-readout line (no accepted intermediate record).",
+    "noise": "Env-ification of constants, MODEL_DIM/HEAD_DIM/COMPILE env, checkpoint save/load + dataloader alignment, macro-accum/CEM search and alpha-grid paths (off by default and in the run), per-group pulse diagnostics in logs, and VAL_REGULAR_INTERVAL/DENSE_EVAL controls (eval-only)."
+  },
+  "techniques": [
+    {"id": "muon", "note": "12 NS iters (a,b,c = 2,−1.5,0.5) on Schatten-4-normalized input; Nesterov-EMA μ; √max(1,m/n)"},
+    {"id": "soap_muon_mlp", "note": "mlp.fc & mlp.proj: eigenbasis-Adam on momentum, basis refresh every 10 steps, β2 0.90"},
+    {"id": "soap_muon_attn", "note": "attn.v only (SOAP blend 0.95, denom floor 0.55); attn.proj trust-gate code dormant"},
+    {"id": "contra_muon", "note": "−0.2 × unit-norm momentum added around the NS step, ramped linearly to 0 by step 2500"},
+    {"id": "aurora", "note": "wide mlp.proj only: 3 D-rescaled NS passes (β=0.25) toward uniform per-hidden-unit leverage"},
+    {"id": "circuit_muon", "note": "unchanged from #41: 12 attn.v↔attn.proj pairs, partner post-whiten + gauge projection, λ=1e-3"},
+    {"id": "radial_brake", "note": "outward radial part of the update ×0.5; post-step rescale to first-order target radius"},
+    {"id": "uw_floor", "note": "update scaled up so ‖U‖F/‖W‖F ≥ 0.3825 on every Muon matrix; no weight decay"},
+    {"id": "ema_nesterov", "note": "lookahead 0.3·lr/lr0 along EMA(0.99) of per-step displacement, steps 300–1900"},
+    {"id": "powercool", "note": "t_end 2950, switched to 3010 at step 2600 (LR ×1.20); run ends at ~3.9% of peak Muon LR"},
+    {"id": "mu_schedule", "note": "μ 0.85→0.95 over first 300 steps; 0.95→0.85 over steps 2750–2850"},
+    {"id": "zero_proj_init", "note": "every param named *proj* zeroed: attn.proj, mlp.proj, lm head (weights and biases)"},
+    {"id": "depth_scaled_fc_init", "note": "mlp.fc weight × (1 − 0.30·layer/11)"},
+    {"id": "cgi_gain_init", "note": "norm1/norm2 gains = 1 ∓ 0.14·s, s Rademacher per channel, all 12 blocks"},
+    {"id": "trail_delta", "note": "TrailDelta ref 2650, pulses 2750 (γ −0.04) & 2850 (γ −0.12, β=1); BroadDelta 2000→2400 γ −0.005"},
+    {"id": "phase_readout", "note": "q/k/mlp matrices, t0 2650 / t1 2750; final θ += 0.01·normalized orthogonal phase term"},
+    {"id": "anchor_readout", "note": "at final eval θ += 0.08·(θ_2400 − θ) on all non-embedding params"},
+    {"id": "aux_adam", "note": "fused AdamW (bias-corrected): embed 0.3, head 1/320, 1-D 0.01; β(0.8,0.99), eps 1e-10, wd 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "2850",
+    "steps.claimed": "2850",
+    "hidden.optimizer": "Muon (SOAP on mlp.fc/mlp.proj/attn.v) + Contra + Aurora + Circuit-Muon",
+    "hidden.lr": "0.0375",
+    "hidden.momentum": "0.95 (scheduled 0.85→0.95→0.85)",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99)",
+    "schedule.kind": "PowerCool with tail horizon switch",
+    "schedule.power": "1.2",
+    "schedule.end_step": "2950 until step 2600, then 3010",
+    "ema_nesterov.window": "steps 300–1900",
+    "mu_schedule.cooldown": "100 steps (2750–2850)",
+    "uw_floor.target": "0.3825",
+    "contra_muon.coeff": "−0.2 → 0 linearly by step 2500",
+    "circuit_muon.damping": "1e-3",
+    "trail_delta.ref_step": "2650",
+    "trail_delta.interval": "100 (pulses at 2750, 2850)",
+    "trail_delta.gamma_first": "−0.04",
+    "trail_delta.gamma_final": "−0.12",
+    "trail_delta.momentum_beta": "1.0",
+    "trail_delta.scope": "nonembed (172 tensors)",
+    "trail_delta.broad": "capture 2000, apply 2400, γ −0.005, muon_other (48 tensors)",
+    "phase_readout.steps": "t0 2650, t1 2750, applied at 2850",
+    "phase_readout.kappa": "0.01 (γ 0, orthogonal, normalized to ‖v‖)",
+    "phase_readout.scope": "muon_other (q, k, mlp.fc, mlp.proj)",
+    "anchor_readout.anchor_step": "2400",
+    "anchor_readout.alpha": "0.08 (nonembed)"
+  },
+  "mechanisms": [
+    {
+      "id": "trail_delta",
+      "name": "TrailDelta / BroadDelta pulses",
+      "explain": "TrailDelta snapshots all non-embedding params at step 2650; whenever 100 steps have elapsed (2750, 2850) it forms Δ = θ − θ_ref (+ β·Δ_prev, β = 1.0), moves θ += γ·Δ with γ = −0.04 for the first pulse and −0.12 for the last, and re-snapshots θ_ref. BroadDelta is one pulse of the same form on muon_other matrices (q, k, mlp.fc, mlp.proj): θ += −0.005·(θ_2400 − θ_2000) at step 2400. The 2400 and 2750 pulses edit live weights mid-training without touching Muon/Adam/EMA-Nesterov state; the 2850 pulse lands just before the final eval.",
+      "symbols": ["maybe_apply_trail_delta_step", "maybe_capture_broad_delta", "maybe_apply_broad_delta"]
+    },
+    {
+      "id": "phase_readout",
+      "name": "Normalized orthogonal phase readout",
+      "explain": "Snapshots muon_other params at t0 = 2650 and t1 = 2750 (t1 taken after the first TrailDelta pulse). At the final eval, per tensor: v = θ − θ_t1 and a = v − (θ_t1 − θ_t0); in orthogonal mode the phase term is a minus its projection onto v, rescaled to ‖v‖, and θ += 0·v + 0.01·phase — a small nudge along the direction in which the trajectory is turning. The logged move is ≈2e-4 of each tensor's norm.",
+      "symbols": ["maybe_capture_phase_readout_anchor", "maybe_apply_phase_readout"]
+    },
+    {
+      "id": "anchor_readout",
+      "name": "Final anchor readout",
+      "explain": "Captures all non-embedding params at step 2400 (after the BroadDelta pulse). Immediately before the step-2850 validation, after TrailDelta's final pulse and the phase readout, it applies θ += 0.08·(θ_2400 − θ), an 8% interpolation back toward the earlier anchor that is evaluated but never trained on.",
+      "symbols": ["maybe_capture_final_readout_anchor", "apply_final_readout_alpha", "maybe_apply_final_readout"]
+    }
+  ],
+  "caveats": "The extracted script's in-code env defaults differ from the record run: by default BROAD_DELTA_GAMMA=0, PHASE_READOUT_KAPPA=0 and FINAL_READOUT_ALPHA=0 (all off), TrailDelta uses γ=−0.08/−0.08 with β=0, and the tail switch is 2650→3000. The record used run.sh overrides (switch 2600→3010; γ −0.04/−0.12, β 1.0; BroadDelta; phase κ 0.01; anchor α 0.08), confirmed by the logs' 'Using …' lines and pulse messages; this analysis reports that run configuration. SAVE_CHECKPOINT_STEPS=2000 and VAL_REGULAR_INTERVAL=0 in run.sh affect only I/O and evaluation. The anchor readout is the same interpolation form as sibling #42's fixed_ref_interp (θ += −0.075·(θ − θ_2375)), here with anchor 2400, α 0.08 and non-embedding scope; #42 is not in #43's ancestry.",
+  "new_technique_ids": []
+}

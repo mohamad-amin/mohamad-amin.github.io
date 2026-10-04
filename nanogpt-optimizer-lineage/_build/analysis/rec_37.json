@@ -1,0 +1,197 @@
+{
+  "id": 37,
+  "parent": 5,
+  "short_name": "MuonH + tuned aux",
+  "edge": {
+    "title": "Graft #36's tuned aux AdamW (×1.3) onto MuonH; aux cooldown 0.85",
+    "summary": "MuonH itself is unchanged (Nesterov 0.95 + Newton–Schulz, hyperball step, lr 0.018 decaying linearly over the whole run). The change is in aux AdamW, which takes #36's tuned baseline values scaled up — embed 0.7→0.91 and scalars 0.015→0.0195 (×1.3), head 0.004→0.0064 (×1.6) — with weight decay 0.001 and a longer cooldown (last 85% instead of 40%); steps drop from 3325 to 3250. The script is the repo's refactored MuonH port, so the init also differs from #5's logged run: Gaussian std √(0.33/fan_in) with the same ×1.25/×3.0/×1.5 multipliers, all biases zero, and an LM head that is no longer zero-initialized (despite the retained comment).",
+    "changes": [
+      {
+        "type": "tuned",
+        "label": "Aux AdamW LRs from #36 (×1.3 / ×1.6)",
+        "detail": "embed 0.3 → 0.910, head 1/320 → 0.0064, 1-D params 0.01 → 0.0195; #36 used 0.7 / 0.004 / 0.015.",
+        "symbols": [
+          "optimizer1"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Aux weight decay 0 → 0.001",
+        "detail": "AdamW weight_decay = 0.001 (decoupled), applied to the embedding, LM head, gains and biases.",
+        "symbols": [
+          "optimizer1"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Aux cooldown_frac 0.4 → 0.85",
+        "detail": "AdamW groups get group['cooldown_frac'] = 0.85 (flat for only the first 15%); MuonH keeps 1.0.",
+        "symbols": [
+          "set_hparams",
+          "cooldown_frac"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "LM head no longer zero-initialized",
+        "detail": "The init branch that zeroed 'proj' weights is gone, so proj.weight (LM head) gets N(0, 0.33/768), std ≈ 0.0207, although the comment still says it is zeroed.",
+        "symbols": [
+          "init loop over model.named_parameters()"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Gaussian base init, all biases zero",
+        "detail": "Hidden weights are N(0, 0.33/fan_in) (vs Kaiming-uniform 1/(3·fan_in) in #5) before ×1.25/×3.0/×1.5; all biases are zero (q/k/v/fc biases were default-uniform in #5).",
+        "symbols": [
+          "init loop over model.named_parameters()"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3325 → 3250",
+        "detail": "train_steps = 3250, also the claimed step.",
+        "symbols": [
+          "train_steps"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Single MuonH + updated skeleton",
+        "detail": "One MuonH over all block 2-D params (was four per-shape instances, same math); F.rms_norm RMSNorm/QK-norm, num_trials loop, in-loop train_loader and per-interval step_avg from the updated baseline.",
+        "symbols": [
+          "MuonH",
+          "num_trials"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3325",
+        "to": "3250"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed step",
+        "from": "3325",
+        "to": "3250"
+      },
+      {
+        "key": "aux.embed_lr",
+        "label": "embed lr",
+        "from": "0.3",
+        "to": "0.910"
+      },
+      {
+        "key": "aux.head_lr",
+        "label": "head lr",
+        "from": "1/320",
+        "to": "0.0064"
+      },
+      {
+        "key": "aux.scalar_lr",
+        "label": "1-D param lr",
+        "from": "0.01",
+        "to": "0.0195"
+      },
+      {
+        "key": "aux.wd",
+        "label": "AdamW weight decay",
+        "from": "0",
+        "to": "0.001"
+      },
+      {
+        "key": "schedule.aux_cooldown_frac",
+        "label": "aux cooldown_frac",
+        "from": "0.4",
+        "to": "0.85"
+      },
+      {
+        "key": "init.hidden_std",
+        "label": "hidden base init",
+        "from": "Kaiming-uniform, std 1/√(3·fan_in)",
+        "to": "N(0, 0.33/fan_in)"
+      },
+      {
+        "key": "init.bias",
+        "label": "bias init",
+        "from": "proj biases 0; q/k/v/fc default uniform",
+        "to": "all 0"
+      },
+      {
+        "key": "init.proj",
+        "label": "LM head init",
+        "from": "0",
+        "to": "N(0, 0.33/768), std ≈ 0.0207"
+      }
+    ],
+    "techniques_added": [],
+    "techniques_removed": [],
+    "techniques_modified": [
+      "aux_adam",
+      "split_cooldown",
+      "per_module_init_std"
+    ],
+    "parent_check": "Declared parent #5 holds for the method, but the file is a 4-hunk edit of the repo's refactored MuonH script (results/20260430_muonh/train_gpt_simple_muonh.py), which ported #5 onto the updated baseline skeleton with a Gaussian init that no longer zeroes the head. Relative to that file only train_steps, the aux AdamW LRs/wd and the aux cooldown change, which is why #36 (same skeleton and init function) is the nearest code (84 lines). From #36: the AdamW base LRs (scaled) and wd 0.001.",
+    "noise": "Skeleton differences vs #5's logged script (F.rms_norm RMSNorm, num_trials loop, logging), the single MuonH instance, and comments — two of them stale (the init comment claims the head and proj biases are zeroed; the schedule comment says aux cooldown 0.7 while the code uses 0.85)."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "Nesterov momentum 0.95 → NS5 (12 iters); magnitude discarded by the hyperball step"
+    },
+    {
+      "id": "hyperball",
+      "note": "all 72 block matrices pinned to init ‖W‖_F; step lr·‖W‖_F then renormalize; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "Gaussian std √(0.33/fan_in) × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; q/k/v ×1"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "MuonH: linear to 0 from step 0; AdamW: flat for 15%, then linear to 0"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "aux AdamW cooldown_frac 0.85 vs MuonH 1.0"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.91 / head 0.0064 / 1-D 0.0195, betas (0.8, 0.95), eps 1e-10, wd 0.001"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3250",
+    "steps.claimed": "3250",
+    "hidden.optimizer": "MuonH (Muon direction + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.910",
+    "aux.head_lr": "0.0064",
+    "aux.scalar_lr": "0.0195",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0.001",
+    "schedule.kind": "linear decay; MuonH from step 0, AdamW after 15%",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.85",
+    "hyperball.radius": "per-matrix ‖W‖_F at init (expected ≈16 q/k/v, 20 attn.proj, 48 mlp.fc & mlp.proj)",
+    "init.hidden_std": "N(0, 0.33/fan_in), std ≈ 0.0207 (q/k/v)",
+    "per_module_init_std.attn_proj": "×1.25",
+    "per_module_init_std.mlp_proj": "×3.0",
+    "per_module_init_std.mlp_fc": "×1.5",
+    "init.proj": "LM head N(0, 0.33/768), not zeroed",
+    "init.bias": "all 0",
+    "init.embed_std": "1.0 (normal_())"
+  },
+  "mechanisms": [],
+  "caveats": "Retained comments are stale: the init comment says the LM head and proj biases are zeroed and describes Kaiming-uniform multipliers (code zeroes all biases, uses Gaussian init and leaves the head non-zero), and the schedule comment says aux cooldown 0.7 (code 0.85). The non-zero head init is inherited from the repo's refactored #5 script rather than tuned here, and its effect is unablated; all 10 logs ran this exact script.",
+  "new_technique_ids": []
+}

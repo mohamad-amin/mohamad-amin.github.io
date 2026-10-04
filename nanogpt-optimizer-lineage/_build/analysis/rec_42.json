@@ -1,0 +1,240 @@
+{
+  "id": 42,
+  "parent": 40,
+  "short_name": "Zero bias + ref interp",
+  "edge": {
+    "title": "Zero-init biases, drop CGI gains, fixed ref interpolation from 2850",
+    "summary": "A clean rewrite of the #40 stack (Aurora/SOAP/Contra/radial-brake/u-w floor/EMA-Nesterov unchanged; zero-weight Soft-Muon and trust-gate code deleted) with three behavioral changes: all non-projection biases (q/k/v/mlp.fc) start at zero instead of nn.Linear's U(±1/√768), the CGI Rademacher gain split is dropped (α 0.14→0, all norm gains start at 1), and validations from step 2850 use a fixed reference interpolation θ_eval = 0.925·θ + 0.075·θ_2375 over all float parameters, applied and then undone. Training stops at 2860 while the 2900/2980 schedule horizon is kept. The readout rule and constants (capture 2375, γ=−0.075) are those introduced in #38, here moved onto the EMA-Nesterov branch and applied from 2850 instead of 2900.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Fixed reference interpolation ≥2850",
+        "detail": "maybe_capture_ref_extrap_state copies all float params to CPU after update 2375; validations with step ≥ 2850 (2850 and 2860) apply θ += −0.075·(θ − θ_2375) via apply_ref_extrap_weights, evaluate, then restore_ref_extrap_weights.",
+        "symbols": [
+          "maybe_capture_ref_extrap_state",
+          "apply_ref_extrap_weights",
+          "restore_ref_extrap_weights",
+          "REF_CAPTURE_STEP",
+          "REF_APPLY_START_STEP",
+          "REF_GAMMA"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Zero-init all non-proj biases",
+        "detail": "The init loop now also zeroes every parameter ending in 'bias' (q/k/v and mlp.fc biases; proj biases were already zero), replacing PyTorch's default uniform bias init.",
+        "symbols": [
+          "ZERO_NONPROJ_BIASES"
+        ]
+      },
+      {
+        "type": "removed",
+        "label": "CGI Rademacher gain init",
+        "detail": "CGI_ALPHA = 0.0 and the gain-split block is deleted, so norm1/norm2 gains start at 1 (DI-fc α=0.30 kept).",
+        "symbols": [
+          "CGI_ALPHA"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Stop at 2860, horizon unchanged",
+        "detail": "The loop runs to RUN_STOP_STEP=2860 (evals {2850, 2860}); TRAIN_STEPS=2900 still sets the μ cooldown (2800–2900) and EMA-Nesterov rest step 1950, SCHEDULE_STEPS=2980 the PowerCool end.",
+        "symbols": [
+          "RUN_STOP_STEP",
+          "TRAIN_STEPS",
+          "SCHEDULE_STEPS"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Minimal rewrite of #40 code",
+        "detail": "Soft-Muon (zero blend), attn.proj trust gate, SOAP-mode switch, attention-fade and unused Muon weight_decay removed; V-SOAP path inlined as norm_preserving_soap_blend; NorMuon-lite code kept but inert (NOR_BETA2=1.0); CLI log options.",
+        "symbols": [
+          "muon_update",
+          "Muon._init_state",
+          "norm_preserving_soap_blend",
+          "should_soap_param"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "2890",
+        "to": "2860"
+      },
+      {
+        "key": "init.bias",
+        "label": "q/k/v/fc bias init",
+        "from": "nn.Linear default U(±1/√768)",
+        "to": "0"
+      },
+      {
+        "key": "init.gains",
+        "label": "norm gains init",
+        "from": "CGI Rademacher α=0.14",
+        "to": "1 (CGI α=0)"
+      },
+      {
+        "key": "fixed_ref_interp.capture_step",
+        "label": "reference capture step",
+        "from": "none",
+        "to": "2375"
+      },
+      {
+        "key": "fixed_ref_interp.gamma",
+        "label": "reference interp γ",
+        "from": "none",
+        "to": "-0.075"
+      },
+      {
+        "key": "fixed_ref_interp.apply_start_step",
+        "label": "reference apply from",
+        "from": "none",
+        "to": "2850"
+      }
+    ],
+    "techniques_added": [
+      "fixed_ref_interp",
+      "zero_bias_init"
+    ],
+    "techniques_removed": [
+      "cgi_gain_init"
+    ],
+    "techniques_modified": [
+      "early_stop"
+    ],
+    "parent_check": "#40 confirmed despite the rewrite (textually nearest to #14 only because the script was minimized). Every active #40 component is present with identical constants: Muon (12-iter NS, μ 0.85↔0.95, cooldown over last 100 of 2900), SOAP on mlp.fc/mlp.proj (freq 10, β2 0.9) and attn.v (blend 0.95, floor 0.55, ungated), Aurora on mlp.proj (K=3, β=0.25), Contra −0.2→0 by 2500, radial brake 0.5/1.0 + radius pin, u/w floor 0.3825, PowerCool (2980, p=1.2, same c's), AdamW (0.3, 1/320, 0.01; β (0.8, 0.99)), proj zero-init, DI-fc 0.30, EMA-Nesterov (0.3·lr/lr0, 0.99, steps 300–1949). Only zero-effect #40 code was dropped and NorMuon-lite stays inert (β2=1). #14's distinctive settings (linear cooldown, u/w 0.35, live NorMuon-lite, Adam β2 0.95) are absent.",
+    "noise": "Whole-file rewrite: new docstring, constants renamed (FINAL_* → TRAIN_STEPS/SCHEDULE_STEPS/LR_POWER), Muon state init factored into _init_state, removed dead branches, --log-dir/--log-file/--progress-interval CLI args (console-only progress), ema_beta/ref_gamma log suffixes."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "momentum lerp + grad.lerp(buf, μ); 12 NS iters (2, −1.5, 0.5); ×max(1,m/n)^½"
+    },
+    {
+      "id": "soap_muon_mlp",
+      "note": "SOAP preconditioning of mlp.fc & mlp.proj momentum before NS; freq 10, β2 0.90"
+    },
+    {
+      "id": "soap_muon_attn",
+      "note": "attn.v only: SOAP blend 0.95, denom floor 0.55, norm-preserving, ungated"
+    },
+    {
+      "id": "contra_muon",
+      "note": "−0.2·G/‖G‖₄ term fading linearly to 0 at step 2500"
+    },
+    {
+      "id": "aurora",
+      "note": "mlp.proj only: K=3 leverage-rebalanced NS rounds, β=0.25"
+    },
+    {
+      "id": "uw_floor",
+      "note": "‖u‖/‖w‖ raised to 0.3825 on all hidden matrices"
+    },
+    {
+      "id": "radial_brake",
+      "note": "outward radial ×0.5, inward ×1.0; post-step radius rescale"
+    },
+    {
+      "id": "ema_nesterov",
+      "note": "all params; θ += β·EMA_0.99(Δθ) before fwd, β=0.3·lr/lr0, steps 300–1949"
+    },
+    {
+      "id": "powercool",
+      "note": "lr = min(lr0, c·(2980−t)^1.2) per group, power 1.2"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "implicit via per-group c: Muon decays from ≈ step 594, AdamW groups from ≈ step 1567"
+    },
+    {
+      "id": "mu_schedule",
+      "note": "μ 0.85→0.95 over 0–300; 0.95→0.85 over 2800–2900 (μ≈0.891 at the 2860 stop)"
+    },
+    {
+      "id": "early_stop",
+      "note": "loop stops and claims at 2860 vs train_steps 2900"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "every param with 'proj' in its name zeroed"
+    },
+    {
+      "id": "zero_bias_init",
+      "note": "all remaining Linear biases (q, k, v, mlp.fc) zero at init"
+    },
+    {
+      "id": "depth_scaled_fc_init",
+      "note": "mlp.fc weight × (1 − 0.30·l/11)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3, head 1/320, 1-D 0.01; betas (0.8, 0.99), eps 1e-10, wd 0"
+    },
+    {
+      "id": "fixed_ref_interp",
+      "note": "eval-only at 2850/2860: θ ← 0.925·θ + 0.075·θ_2375 for all float params"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "2900",
+    "steps.claimed": "2860",
+    "hidden.optimizer": "Muon + SOAP (MLP, V) + Contra + Aurora (mlp.proj), inside EMA-Nesterov",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0",
+    "hidden.momentum": "0.85→0.95→0.85 (cooldown 2800–2900)",
+    "hidden.ns_iters": "12 (3×12 for mlp.proj)",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99)",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "2980",
+    "schedule.hidden_cooldown_frac": "≈0.801 of 2980, derived (Muon flat until ≈594)",
+    "schedule.aux_cooldown_frac": "≈0.474 of 2980, derived (AdamW flat until ≈1567)",
+    "init.proj": "zero",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1 (CGI α=0)",
+    "contra_muon.coeff": "-0.2",
+    "contra_muon.ramp_end_step": "2500",
+    "aurora.K": "3",
+    "aurora.beta": "0.25",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "ema_nesterov.beta": "0.3·lr/lr0",
+    "ema_nesterov.gamma": "0.99",
+    "ema_nesterov.window": "300–1949",
+    "fixed_ref_interp.capture_step": "2375",
+    "fixed_ref_interp.gamma": "-0.075",
+    "fixed_ref_interp.apply_start_step": "2850"
+  },
+  "mechanisms": [
+    {
+      "id": "fixed_ref_interp",
+      "name": "Fixed reference interpolation",
+      "explain": "Right after update 2375, maybe_capture_ref_extrap_state stores CPU copies of every floating-point parameter (embedding, lm head, gains, biases, hidden matrices). At each validation with step ≥ 2850, apply_ref_extrap_weights adds γ(θ − θ_2375) with γ = −0.075, so the model is evaluated at 0.925·θ + 0.075·θ_2375; restore_ref_extrap_weights subtracts the same deltas afterwards, leaving training untouched (same rule and constants as #38, which applied it only at 2900).",
+      "symbols": [
+        "maybe_capture_ref_extrap_state",
+        "apply_ref_extrap_weights",
+        "restore_ref_extrap_weights",
+        "ref_extrap_gamma_for_step"
+      ]
+    },
+    {
+      "id": "zero_bias_init",
+      "name": "Zero-initialized biases",
+      "explain": "The init loop zeroes every parameter whose name contains 'proj' (as before) and, with ZERO_NONPROJ_BIASES=True, every other parameter ending in 'bias', i.e. the q/k/v and mlp.fc biases that nn.Linear would otherwise draw from U(±1/√768). These biases remain trainable by the 1-D AdamW group (lr 0.01).",
+      "symbols": [
+        "ZERO_NONPROJ_BIASES"
+      ]
+    }
+  ],
+  "caveats": "Table/README describe it as 'Setup from #40'; the reference-interpolation rule and constants match #38 exactly (capture 2375, γ=−0.075), although #38 is not listed as an influence, and here they apply from 2850 rather than 2900. The archived script hardcodes all values (no env overrides); logs ran on 8×L40S (world_size=8). #42 is a leaf: later records (#41/#43–#46) descend from #40/#41 and keep CGI gains and default bias init.",
+  "new_technique_ids": [
+    "zero_bias_init"
+  ]
+}

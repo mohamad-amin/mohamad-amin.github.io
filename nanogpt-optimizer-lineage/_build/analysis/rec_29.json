@@ -1,0 +1,103 @@
+{
+  "id": 29,
+  "parent": 20,
+  "short_name": "Radial brake",
+  "edge": {
+    "title": "Radial brake: halve outward radial update, then pin post-step norm",
+    "summary": "Adds a radial brake to every hidden matrix on top of #20. After muon_update, the update u is split into a radial part (its projection onto the weight W) and a tangential part; if the step −lr·u would move W outward (⟨u, W⟩ < 0) the radial part is multiplied by 0.5 (inward motion untouched), and only then is the 0.3825 u/w floor applied. After the step, W is rescaled to ‖W‖ − lr·⟨u, W⟩/‖W‖, so the norm changes only by the first-order (braked) radial term and the second-order growth from the tangential step is removed. The run is shortened to 3020 steps (PowerCool endpoint still 3105) and claimed at 2990.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Outward radial component × 0.5",
+        "detail": "scale_radial_update: coeff = ⟨u, W⟩/‖W‖²; radial = coeff·W is scaled by RADIAL_OUTWARD_SCALE = 0.5 if coeff < 0, else RADIAL_INWARD_SCALE = 1.0; applied before the u/w floor.",
+        "symbols": ["scale_radial_update", "RADIAL_OUTWARD_SCALE", "RADIAL_INWARD_SCALE"]
+      },
+      {
+        "type": "added",
+        "label": "Post-step radius pin",
+        "detail": "target_radius_after_update computes ‖W‖ − lr·⟨u, W⟩/‖W‖ from the floored update; after p.add_, rescale_to_radius multiplies W to exactly that norm, removing tangential norm drift.",
+        "symbols": ["target_radius_after_update", "rescale_to_radius"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3040 → 3020, claim 2990",
+        "detail": "FINAL_TRAIN_STEPS = 3020 with unchanged PowerCool constants and endpoint 3105; claimed at the 2990 checkpoint (Muon LR ≈2.6% of peak).",
+        "symbols": ["FINAL_TRAIN_STEPS", "extra_val_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Logging and validation grid",
+        "detail": "LOG_DIR = 'logs', UTC timestamp print, new intuition string, radial config prints, extra_val_steps {2990, 2995, 2999, 3000, 3010, 3020}.",
+        "symbols": ["LOG_DIR", "EXPERIMENT_INTUITION"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3040", "to": "3020"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3030", "to": "2990"},
+      {"key": "radial_brake.outward_scale", "label": "RADIAL_OUTWARD_SCALE", "from": "—", "to": "0.5"},
+      {"key": "radial_brake.inward_scale", "label": "RADIAL_INWARD_SCALE", "from": "—", "to": "1.0"}
+    ],
+    "techniques_added": ["radial_brake"],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "consistent — nearest-code is #20; the diff only adds the radial brake and radius pin, shortens train_steps, and changes logging and the validation grid.",
+    "noise": "Docstring, EXPERIMENT_INTUITION (EXPERIMENT_NAME is still 'contra-muon-to-soft-muon'), LOG_DIR, timestamp and radial config prints, extra_val_steps."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95, 12 NS iters with Schatten-4 input normalization, lr 0.0375"},
+    {"id": "contra_muon", "note": "+coeff·M/‖M‖_S4 with coeff −0.2 at step 0 → 0 linearly by step 2000; norm restored"},
+    {"id": "soft_muon", "note": "p=0.1 map from weighted NS iterates; blend 0 → 0.8 over steps 2500–2908, held at 0.8"},
+    {"id": "normuon_lite", "note": "variance EMA (β2 0.95) along the longer dim; Schatten-4 norm restoration"},
+    {"id": "soap_muon_mlp", "note": "mlp.fc/mlp.proj, β 0.90, basis refresh every 10, blend 1.0"},
+    {"id": "soap_muon_attn", "note": "attn.v only: 0.95·SOAP + 0.05·raw momentum, denom floor 0.55×RMS, no trust gate"},
+    {"id": "radial_brake", "note": "outward radial part of update × 0.5 before the u/w floor; post-step norm pinned"},
+    {"id": "uw_floor", "note": "target 0.3825 for all hidden matrices, applied after the radial brake; wd unused"},
+    {"id": "powercool", "note": "lr = min(lr0, c·(3105 − step)^1.2) per group; run stops at 3020"},
+    {"id": "split_cooldown", "note": "implicit via per-group c: Muon decays from ≈ step 719, AdamW groups from ≈ step 1692"},
+    {"id": "aux_adam", "note": "AdamW lr embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "zero_proj_init", "note": "every param with 'proj' in its name zeroed (attn/mlp proj and lm head, weights and biases)"},
+    {"id": "early_stop", "note": "claimed at 2990 of 3020 run steps (schedule endpoint 3105; Muon LR ≈2.6% of peak)"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3020 (FINAL_TRAIN_STEPS)",
+    "steps.claimed": "2990",
+    "hidden.optimizer": "Muon (Contra→NS→Soft blend) + SOAP (MLP, attn.v) + NorMuon-lite + radial brake + u/w floor",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 effective (FINAL_MUON_WD=0.025 passed, never applied)",
+    "hidden.momentum": "0.95",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95 (NOR_BETA2, NorMuon-lite)",
+    "radial_brake.outward_scale": "0.5",
+    "radial_brake.inward_scale": "1.0",
+    "contra_muon.coeff": "-0.2 (CONTRA_MUON_COEFF) × (1 − step/2000), 0 after step 2000",
+    "soft_muon.p": "0.1",
+    "soft_muon.ceil": "0.80",
+    "soft_muon.ramp": "linear from step 2500 to 3010 (cap reached at 2908)",
+    "uw_floor.target": "0.3825",
+    "soap_muon_mlp.beta2": "0.90",
+    "soap_muon_mlp.precond_freq": "10",
+    "soap_muon_attn.scope": "attn.v.weight (SOAP_PARAM_MODE='mlp_plus_v')",
+    "soap_muon_attn.blend": "0.95 (V_SOAP_BLEND)",
+    "soap_muon_attn.denom_floor": "0.55",
+    "schedule.kind": "powercool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "3105 (FINAL_SCHEDULE_STEPS)",
+    "powercool.muon_c": "3.3169534699576625e-06",
+    "powercool.embed_c": "4.976805410800738e-05",
+    "powercool.head_c": "5.184172302917436e-07",
+    "powercool.scalar_c": "1.6589351369335795e-06",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01"
+  },
+  "mechanisms": [
+    {
+      "id": "radial_brake",
+      "name": "Radial brake + radius pin",
+      "explain": "The update u is decomposed into its component along the weight W (coeff = ⟨u, W⟩/‖W‖²) and the tangential remainder. Because the step is W ← W − lr·u, coeff < 0 means the weight would grow, and in that case the radial component is halved (RADIAL_OUTWARD_SCALE = 0.5) before the u/w floor; inward components are untouched. After the step, W is rescaled to ‖W‖ − lr·⟨u, W⟩/‖W‖ (the first-order radius change), removing the √(‖W‖² + lr²‖u_t‖²) norm creep caused by finite tangential steps, which the u/w-floor regime (no weight decay) would otherwise accumulate.",
+      "symbols": ["scale_radial_update", "target_radius_after_update", "rescale_to_radius"]
+    }
+  ],
+  "caveats": "The README describes the damping as a post-step norm rescale; in code the outward radial part is halved on the update before the u/w floor, and the post-step rescale only pins the norm to the first-order prediction. When the u/w floor binds it rescales the whole braked update back up, so the brake then shifts step size from radial to tangential rather than shrinking the step. All #20 caveats carry over (attn.proj trust gate dormant, Schatten-4 norms, effective wd 0).",
+  "new_technique_ids": []
+}

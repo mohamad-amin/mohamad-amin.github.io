@@ -1,0 +1,138 @@
+{
+  "id": 36,
+  "parent": 12,
+  "short_name": "Tuned Muon baseline",
+  "edge": {
+    "title": "Retune aux AdamW (lrs up, wd 0.001) and Muon (lr 0.025, wd 0.05)",
+    "summary": "A hyperparameter-only retune of #12 that became the official train_gpt_simple.py baseline. Aux AdamW learning rates rise (embed 0.3→0.7, LM head 1/320→0.004, 1-D 0.01→0.015) and gain decoupled wd=0.001, while Muon takes a smaller lr with stronger decay (lr 0.035→0.025, wd 0.025→0.05; lr·wd 8.75e-4→1.25e-3 per step at peak). The run is scheduled for 3250 steps and read at the final step (no early stop), 75 steps fewer than #12.",
+    "changes": [
+      {
+        "type": "tuned",
+        "label": "Aux AdamW lrs raised",
+        "detail": "optimizer1 groups: embed.weight lr 0.3 → 0.7, LM head proj.weight 1/320 → 0.004, ndim<2 params 0.01 → 0.015; betas (0.8, 0.95) and eps 1e-10 unchanged.",
+        "symbols": ["optimizer1"]
+      },
+      {
+        "type": "tuned",
+        "label": "Aux AdamW wd 0 → 0.001",
+        "detail": "weight_decay=0.001 now applies to every aux group (embedding, LM head, RMSNorm gains and biases) as decoupled p *= 1 − lr·0.001, e.g. 7e-4 per step on the embedding at peak; gains decay toward 0, not 1.",
+        "symbols": ["optimizer1"]
+      },
+      {
+        "type": "tuned",
+        "label": "Muon lr 0.035→0.025, wd 0.025→0.05",
+        "detail": "optimizer2 = Muon(lr=0.025, weight_decay=0.05): smaller steps with stronger shrinkage (lr·wd 1.25e-3 per step at peak).",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3350/3325 → 3250/3250",
+        "detail": "train_steps=3250 and the claim is at the final step, so #12's 25-step early stop is dropped.",
+        "symbols": ["train_steps"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "aux.embed_lr",
+        "label": "embed lr",
+        "from": "0.3",
+        "to": "0.7"
+      },
+      {
+        "key": "aux.head_lr",
+        "label": "LM head lr",
+        "from": "1/320",
+        "to": "0.004"
+      },
+      {
+        "key": "aux.scalar_lr",
+        "label": "1-D params lr",
+        "from": "0.01",
+        "to": "0.015"
+      },
+      {
+        "key": "aux.wd",
+        "label": "aux wd",
+        "from": "0",
+        "to": "0.001"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "Muon lr",
+        "from": "0.035",
+        "to": "0.025"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "Muon wd",
+        "from": "0.025",
+        "to": "0.05"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3350",
+        "to": "3250"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3325",
+        "to": "3250"
+      }
+    ],
+    "techniques_added": [],
+    "techniques_removed": ["early_stop"],
+    "techniques_modified": ["muon", "aux_adam"],
+    "parent_check": "Consistent: the diff vs #12 is hyperparameters only. The script is byte-identical to the current records/track_3_optimization/train_gpt_simple.py (git 452cc39, 'Tune train_gpt_simple baseline hyperparameters'), the README quickstart baseline.",
+    "noise": ""
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "lr 0.025, wd 0.05, mu 0.95 Nesterov, NS 12 iters (2,-1.5,0.5)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.7 / head 0.004 / 1-D 0.015, wd 0.001, betas (0.8,0.95), eps 1e-10"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3250 steps"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases zero"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3250",
+    "steps.claimed": "3250",
+    "hidden.optimizer": "Muon",
+    "hidden.lr": "0.025",
+    "hidden.wd": "0.05",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.7",
+    "aux.head_lr": "0.004",
+    "aux.scalar_lr": "0.015",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0.001",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1"
+  },
+  "mechanisms": [],
+  "caveats": "n=10, mean 3.27866 at 3250: (3.28 − 3.27866)·√10 ≈ 0.0042, just above the 0.004 bar. All ten logs carry identical code.",
+  "new_technique_ids": []
+}

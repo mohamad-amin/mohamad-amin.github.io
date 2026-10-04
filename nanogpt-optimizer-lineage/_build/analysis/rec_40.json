@@ -1,0 +1,213 @@
+{
+  "id": 40,
+  "parent": 30,
+  "short_name": "EMA-Nesterov wrapper",
+  "edge": {
+    "title": "Wrap the #30 stack in EMA-Nesterov (β=0.3·lr/lr0, γ=0.99), 2900 steps",
+    "summary": "Wraps the whole #30 optimizer (AdamW + Muon, all parameters) in EMA-Nesterov: an EMA (γ=0.99) of the realized per-step weight displacement is added to the weights, scaled by β = 0.3·lr/lr0, before every forward pass during steps 300–1949, so gradients are taken at a lookahead point and the shift is kept (an extra Nesterov-style momentum on the whole trajectory that amplifies the persistent part of the update by ≈1/(1−β) ≈ 1.4× while β = 0.3). The run is also shortened: train_steps 3020→2900 and PowerCool end 3050→2980 (Muon LR now decays from ~594, Adam from ~1567), which moves the μ cooldown to 2800–2900 and puts the lookahead cutoff at train_steps − 950 = 1950. Optimizer internals are otherwise unchanged from #30.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "EMA-Nesterov lookahead wrapper",
+        "detail": "optimizers = [EMA_Nesterov(model.parameters(), [optimizer1, optimizer2], lookahead_stepsize=0.3, use_scheduled_lookahead_stepsize=True, lookahead_ema=0.99, prefill_steps=300, rest_steps=train_steps−950)]; nesterov_step() runs before the forward pass, step() runs AdamW then Muon and then accum_lookahead().",
+        "symbols": [
+          "EMA_Nesterov",
+          "nesterov_step",
+          "lookahead_step",
+          "accum_lookahead",
+          "get_lr_lambda"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Horizon 3020→2900, PowerCool end 2980",
+        "detail": "FINAL_TRAIN_STEPS 3020→2900 and FINAL_SCHEDULE_STEPS 3050→2980 shift every LR decay 70 steps earlier and move the μ cooldown to steps 2800–2900; the claim is at 2890.",
+        "symbols": [
+          "FINAL_TRAIN_STEPS",
+          "FINAL_SCHEDULE_STEPS",
+          "_muon_mu_at_step"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Hparam loops over inner optimizers",
+        "detail": "initial_lr / set_hparams now iterate optimizers[0].inner_optimizer; blank-line edits.",
+        "symbols": [
+          "set_hparams"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3020",
+        "to": "2900"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "2930",
+        "to": "2890"
+      },
+      {
+        "key": "schedule.end_step",
+        "label": "PowerCool t_end",
+        "from": "3050",
+        "to": "2980"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "μ cooldown window",
+        "from": "2920–3020",
+        "to": "2800–2900"
+      },
+      {
+        "key": "ema_nesterov.beta",
+        "label": "lookahead stepsize β",
+        "from": "none",
+        "to": "0.3·lr/lr0 (embed AdamW group)"
+      },
+      {
+        "key": "ema_nesterov.gamma",
+        "label": "displacement EMA γ",
+        "from": "none",
+        "to": "0.99"
+      },
+      {
+        "key": "ema_nesterov.prefill_steps",
+        "label": "lookahead starts at",
+        "from": "none",
+        "to": "300"
+      },
+      {
+        "key": "ema_nesterov.rest_step",
+        "label": "lookahead ends before",
+        "from": "none",
+        "to": "1950 (= train_steps − 950)"
+      }
+    ],
+    "techniques_added": [
+      "ema_nesterov"
+    ],
+    "techniques_removed": [],
+    "techniques_modified": [
+      "powercool",
+      "mu_schedule",
+      "early_stop"
+    ],
+    "parent_check": "consistent (diff vs #30 is only the wrapper and the horizon change; the EMA_Nesterov class is the same implementation #39 used on the #12 baseline, with β 0.6→0.3 and window 500–2400→300–1950)",
+    "noise": "Blank lines; extra_val_steps entries above 2900 are never reached."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "momentum lerp + grad.lerp(buf, μ); 12 NS iters (2, −1.5, 0.5); ×max(1,m/n)^½"
+    },
+    {
+      "id": "soap_muon_mlp",
+      "note": "SOAP preconditioning of mlp.fc & mlp.proj momentum before NS; freq 10, β2 0.90"
+    },
+    {
+      "id": "soap_muon_attn",
+      "note": "attn.v only: SOAP blend 0.95, denom floor 0.55, ungated"
+    },
+    {
+      "id": "contra_muon",
+      "note": "−0.2·G/‖G‖₄ term fading linearly to 0 at step 2500"
+    },
+    {
+      "id": "aurora",
+      "note": "mlp.proj only: K=3 leverage-rebalanced NS rounds, β=0.25"
+    },
+    {
+      "id": "uw_floor",
+      "note": "‖u‖/‖w‖ raised to 0.3825 on all hidden matrices"
+    },
+    {
+      "id": "radial_brake",
+      "note": "outward radial ×0.5, inward ×1.0; post-step radius rescale"
+    },
+    {
+      "id": "ema_nesterov",
+      "note": "all params; θ += β·EMA_0.99(Δθ) before fwd, β=0.3·lr/lr0, steps 300–1949"
+    },
+    {
+      "id": "powercool",
+      "note": "lr = min(lr0, c·(2980−t)^1.2) per group, power 1.2"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "implicit via per-group c: Muon decays from ≈ step 594, AdamW groups from ≈ step 1567"
+    },
+    {
+      "id": "mu_schedule",
+      "note": "μ 0.85→0.95 over 0–300; 0.95→0.85 over 2800–2900"
+    },
+    {
+      "id": "early_stop",
+      "note": "claimed 2890 vs train_steps 2900"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "every param with 'proj' in its name zeroed"
+    },
+    {
+      "id": "depth_scaled_fc_init",
+      "note": "mlp.fc weight × (1 − 0.30·l/11)"
+    },
+    {
+      "id": "cgi_gain_init",
+      "note": "norm1/norm2 gains 1∓0.14·s, Rademacher s"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3, head 1/320, 1-D 0.01; betas (0.8, 0.99), wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "2900",
+    "steps.claimed": "2890",
+    "hidden.optimizer": "Muon + SOAP (MLP, V) + Contra + Aurora (mlp.proj), inside EMA-Nesterov",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (0.025 passed but unused)",
+    "hidden.momentum": "0.85→0.95→0.85 (cooldown 2800–2900)",
+    "hidden.ns_iters": "12 (3×12 for mlp.proj)",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99)",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "2980",
+    "schedule.hidden_cooldown_frac": "≈0.801 of 2980, derived (Muon flat until ≈594)",
+    "schedule.aux_cooldown_frac": "≈0.474 of 2980, derived (AdamW flat until ≈1567)",
+    "contra_muon.coeff": "-0.2",
+    "contra_muon.ramp_end_step": "2500",
+    "aurora.K": "3",
+    "aurora.beta": "0.25",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "init.gains": "CGI Rademacher α=0.14",
+    "ema_nesterov.beta": "0.3·lr/lr0",
+    "ema_nesterov.gamma": "0.99",
+    "ema_nesterov.prefill_steps": "300",
+    "ema_nesterov.rest_step": "1950"
+  },
+  "mechanisms": [
+    {
+      "id": "ema_nesterov",
+      "name": "EMA-Nesterov lookahead wrapper",
+      "explain": "EMA_Nesterov holds, for every model parameter, the previous post-step weights and a buffer m updated after each step as m ← 0.99·m + 0.01·(θ_new − θ_prev), where the displacement includes the wrapper's own shift. For steps 300–1949, nesterov_step adds β·m to the weights before the forward pass, with β = 0.3 × (current/initial LR of the embed AdamW group); the gradient is taken there and AdamW + Muon update from the shifted point, which is never undone. Net effect: θ_{t+1} = θ_t + β·m_t − η·u(θ_t + β·m_t), an outer heavy-ball/Nesterov momentum on the full weight trajectory that fades with the Adam LR (β ≈ 0.3 until ~1567, ≈0.21 at 1949) and then switches off.",
+      "symbols": [
+        "EMA_Nesterov.nesterov_step",
+        "EMA_Nesterov.lookahead_step",
+        "EMA_Nesterov.accum_lookahead",
+        "EMA_Nesterov.get_lr_lambda"
+      ]
+    }
+  ],
+  "caveats": "β is scaled by the embed AdamW group's LR ratio (read before set_hparams runs, i.e. one step stale), not Muon's: Muon's LR starts decaying near step 594 but β stays 0.3 until ~1567. The lookahead buffer keeps accumulating after step 1950 but is unused. No README exists in the result folder; settings are hardcoded in code (no env overrides), and table text matches (β=.3·lr/max_lr, γ=.99, steps 300–1950).",
+  "new_technique_ids": []
+}

@@ -1,0 +1,120 @@
+{
+  "id": 6,
+  "parent": 3,
+  "short_name": "Muon wd 0.025",
+  "edge": {
+    "title": "Double Muon wd to 0.025 (lr 0.025 kept), 3375 steps; explicit init",
+    "summary": "Keeps #3's Muon lr=0.025 but doubles weight decay to 0.025 (lr·wd 6.25e-4 per step at peak) and shortens the run to 3375 steps, now backed by n=20 runs. It also adopts the refactored baseline script: parameters are explicitly re-initialized inside a multi-trial loop, with Gaussian N(0, 0.33/fan_in) hidden weights instead of PyTorch's uniform default and all biases zeroed (q/k/v/fc biases were uniform), while proj weights stay zero.",
+    "changes": [
+      {
+        "type": "tuned",
+        "label": "Muon wd 0.0125 → 0.025",
+        "detail": "optimizer2 = Muon(lr=0.025, weight_decay=0.025): same lr as #3, twice the decoupled decay p *= 1 − lr·wd.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3500 → 3375",
+        "detail": "Claimed step equals the scheduled end (no early stop).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "modified",
+        "label": "Explicit init, all biases zero",
+        "detail": "Init loop: weights with 'proj' → zero; embed → normal_() i.e. N(0,1); other weights (q, k, v, mlp.fc) → normal_(std=0.33**0.5 / fan_in**0.5) ≈ 0.0207, a Gaussian with ~torch-default std; every bias → 0 (q/k/v/fc biases were U(±1/sqrt(768))); gains → 1; unknown params raise.",
+        "symbols": ["model.named_parameters"]
+      },
+      {
+        "type": "refactor",
+        "label": "Multi-trial harness; RMSNorm call",
+        "detail": "num_trials = int(sys.argv[-1]) wraps init, optimizers, train_loader and training in a loop. RMSNorm becomes F.rms_norm(x, weight=gains.type_as(x)) on the bf16 activations instead of an explicit fp32 upcast (numerics-only). QK norm inlined; logs GPU name, world size and per-interval step_avg.",
+        "symbols": ["num_trials", "RMSNorm"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.wd",
+        "label": "Muon wd",
+        "from": "0.0125",
+        "to": "0.025"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3500",
+        "to": "3375"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3500",
+        "to": "3375"
+      },
+      {
+        "key": "init.hidden_std",
+        "label": "q/k/v/fc init",
+        "from": "torch default nn.Linear U(±1/sqrt(fan_in)), std ≈ 0.0208 (q, k, v, mlp.fc)",
+        "to": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)"
+      },
+      {
+        "key": "init.bias",
+        "label": "bias init",
+        "from": "torch default U(±1/sqrt(fan_in)) for q/k/v/fc; proj biases zero",
+        "to": "zero (all biases)"
+      }
+    ],
+    "techniques_added": [],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "Consistent with #3: lr=0.025 is carried over and only wd/steps change. Git history: the baseline file was first refactored with #3's hparams (8dcef4a: multi-trial loop, explicit init, F.rms_norm), then set to wd=0.025 and 3375 steps (59a11d9, identical to this script). It is textually nearest to #1 only because #3's copy uses muon_lr/muon_weight_decay variables.",
+    "noise": "Re-indentation of the Hyperparams/Training sections under the trial loop, per-interval step_avg and device logging, F.rms_norm inlining of the QK norm."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "lr 0.025, wd 0.025, mu 0.95 Nesterov, NS 12 iters (2,-1.5,0.5)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3375 steps"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases now zero too"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3375",
+    "steps.claimed": "3375",
+    "hidden.optimizer": "Muon",
+    "hidden.lr": "0.025",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1"
+  },
+  "mechanisms": [],
+  "caveats": "n=20 (mean 3.2788 at 3375). The wd change is confounded with the init change (Gaussian hidden weights, zero q/k/v/fc biases) and the RMSNorm numerics change; the record has no ablation separating them.",
+  "new_technique_ids": []
+}

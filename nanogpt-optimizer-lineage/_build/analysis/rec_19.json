@@ -1,0 +1,199 @@
+{
+  "id": 19,
+  "parent": 8,
+  "short_name": "KL-SOAP-H",
+  "edge": {
+    "title": "Replace NorMuon direction with KL-SOAP; keep hyperball and #8 setup",
+    "summary": "The hidden-matrix direction switches from NorMuon (momentum → Newton–Schulz → row normalization) to KL-SOAP: gradients are rotated into an eigenbasis Q_L, Q_R, Adam moments (beta1 0.95, beta2 0.9, eps 1e-8, no bias correction) are run there, and m/(√v+eps) is rotated back. The basis comes from KL-Shampoo factor EMAs (shampoo_beta 0.9) in which each side's gradient covariance is whitened by the other side's running inverse eigenvalues (L ← 0.9L + 0.1·G R⁻¹Gᵀ/cols), refreshed every step by one power-iteration + QR. The result still goes through #8's hyperball step at lr 0.018 with #8's init, per-shape optimizer split, linear schedules and aux AdamW; train_steps drops to 3125 with no early stop.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "KL-SOAP direction replaces NorMuon",
+        "detail": "klsoap_direction: G' = Q_Lᵀ G Q_R; exp_avg ← 0.95·exp_avg + 0.05·G'; exp_avg_sq ← 0.9·exp_avg_sq + 0.1·G'²; U = Q_L·(exp_avg/(√exp_avg_sq + 1e-8))·Q_Rᵀ, using the basis from the previous step. No momentum/NS/row normalization remains.",
+        "symbols": [
+          "KLSOAPH",
+          "klsoap_direction",
+          "project_to_klsoap_basis",
+          "project_from_klsoap_basis"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "KL-Shampoo factors + eigenvalue EMAs",
+        "detail": "update_2d_klsoap_preconditioner_: GG_L ← 0.9·GG_L + 0.1·G R̂⁻¹Gᵀ/cols and GG_R ← 0.9·GG_R + 0.1·Gᵀ L̂⁻¹G/rows, where R̂⁻¹, L̂⁻¹ = Q diag(eigen_sqrt_inv²) Qᵀ and eigen_sqrt_inv (≤ 4000) tracks EMAs of whitened projected-gradient diagonals.",
+        "symbols": [
+          "update_2d_klsoap_preconditioner_",
+          "_update_eigen_sqrt_inv_"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Per-step basis refresh",
+        "detail": "precondition_frequency = 1: refresh_klsoap_basis_ sets Q ← QR(GG·Q) on both sides every step and re-expresses exp_avg in the new basis (exp_avg_sq is not rotated).",
+        "symbols": [
+          "refresh_klsoap_basis_"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Init-only first optimizer step",
+        "detail": "The first step() per matrix only builds GG = G Gᵀ/cols, Gᵀ G/rows, Q = eigh eigenvectors (descending) and eigenvalue estimates 0.1 (init_factor), then skips the weight update.",
+        "symbols": [
+          "init_2d_klsoap_state_",
+          "_initial_orthogonal_matrix"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3275→3125, no early stop",
+        "detail": "train_steps = 3125, and the claim is the final-step eval (#8 claimed 3250 of 3275).",
+        "symbols": [
+          "train_steps"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Skeleton rebuilt on #12's script",
+        "detail": "F.rms_norm RMSNorm/QK-norm (gains now multiplied in activation dtype — numerically minor), num_trials loop with in-loop train_loader, 125→25-step eval cadence after 90%; seeding via KL_SOAP_SEED (default 1) and reset_parameters() before #8's init multipliers.",
+        "symbols": [
+          "RMSNorm",
+          "num_trials",
+          "KL_SOAP_SEED"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "NorMuonH",
+        "to": "KLSOAPH"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "first moment",
+        "from": "0.95 (Nesterov, pre-NS)",
+        "to": "0.95 (Adam beta1 in eigenbasis)"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "second moment",
+        "from": "0.95 (NorMuon row EMA)",
+        "to": "0.9 (Adam v in eigenbasis)"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "eps",
+        "from": "1e-10",
+        "to": "1e-8"
+      },
+      {
+        "key": "kl_soap.shampoo_beta",
+        "label": "factor EMA beta",
+        "from": "—",
+        "to": "0.9"
+      },
+      {
+        "key": "kl_soap.precond_freq",
+        "label": "basis refresh freq",
+        "from": "—",
+        "to": "1"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3275",
+        "to": "3125"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed step",
+        "from": "3250",
+        "to": "3125"
+      }
+    ],
+    "techniques_added": [
+      "kl_soap"
+    ],
+    "techniques_removed": [
+      "muon",
+      "normuon",
+      "early_stop"
+    ],
+    "techniques_modified": [],
+    "parent_check": "Declared parent #8 is right for the method, but the file is textually closest to #12 (222 vs 464 changed lines) because it was rebuilt on the updated baseline skeleton: docstring, F.rms_norm RMSNorm/QK-norm, dist.get_rank() data generator, num_trials loop with in-loop train_loader, 125→25-step eval cadence and per-interval step_avg all match #12. Nothing of #12's optimizer, init or schedule is used. Carried over from #8: scale_invariant_update_ (condensed, same math), the ×1.25/×3.0/×1.5 multipliers on default reset_parameters() init with zeroed head and proj biases (not #12's Gaussian init with all biases zero), the four per-shape optimizer instances, lr 0.018, the 1.0/0.4 cooldown split and aux AdamW. Rebuilt: the hidden optimizer (KLSOAPH) and explicit seeding.",
+    "noise": "Skeleton plumbing from #12 (log format, num_trials loop, dense final evals, step_avg), seeding, reset_parameters(), and storing group['cooldown_frac'] instead of schedule_type."
+  },
+  "techniques": [
+    {
+      "id": "kl_soap",
+      "note": "Adam (β1 .95, β2 .9, eps 1e-8) in KL-Shampoo eigenbasis; shampoo β .9; QR refresh every step"
+    },
+    {
+      "id": "hyperball",
+      "note": "all 72 block matrices pinned to init ‖W‖_F; step lr·‖W‖_F then renormalize; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default init × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; LM head + proj biases zero"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "hidden: linear to 0 over 3125 steps (frac 1.0); aux: flat, then last 40%"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "aux AdamW cooldown_frac 0.4 vs hidden 1.0"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3125",
+    "steps.claimed": "3125",
+    "hidden.optimizer": "KLSOAPH (KL-SOAP direction + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball)",
+    "hidden.momentum": "0.95 (beta1, plain EMA in eigenbasis)",
+    "hidden.beta2": "0.9",
+    "hidden.eps": "1e-8",
+    "kl_soap.shampoo_beta": "0.9",
+    "kl_soap.precond_freq": "1",
+    "kl_soap.init_factor": "0.1 (initial eigenvalue estimate)",
+    "kl_soap.inv_sqrt_clamp": "4000",
+    "kl_soap.bias_correction": "none",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear decay; hidden from step 0, aux after 60%",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "hyperball.radius": "per-matrix ‖W‖_F at init (expected ≈16 q/k/v, 20 attn.proj, 48 mlp.fc & mlp.proj)",
+    "init.hidden_std": "default via reset_parameters(): Kaiming-uniform std 1/√(3·fan_in) ≈ 0.0208 (q/k/v)",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero"
+  },
+  "mechanisms": [
+    {
+      "id": "kl_soap",
+      "name": "KL-SOAP (SOAP in a KL-Shampoo eigenbasis)",
+      "explain": "Each matrix keeps two factor matrices GG_L, GG_R, their eigenbases Q_L, Q_R and per-direction eigenvalue EMAs. The factors are updated KL-Shampoo style — each side's gradient covariance is whitened by the other side's current inverse, Q diag(λ⁻¹) Qᵀ — and the bases are tracked by one power-iteration + QR per step. The actual step is SOAP-like (Adam moments of the rotated gradient, divided elementwise and rotated back) and is fed to the hyperball update; the eigenvalue estimates only shape the factors, not the step.",
+      "symbols": [
+        "KLSOAPH",
+        "klsoap_direction",
+        "update_2d_klsoap_preconditioner_",
+        "refresh_klsoap_basis_"
+      ]
+    }
+  ],
+  "caveats": "No README; the code's printed config (beta1 .95, beta2 .9, shampoo_beta .9, lr .018, pf 1) matches the table. The result folder's sweep summary shows the same setup with beta1 = 0.9 failing (mean 3.28294 vs 3.27800 at 3125 steps), so beta1 = 0.95 matters. The missing bias correction only rescales the update uniformly and is cancelled by the hyperball normalization (up to eps).",
+  "new_technique_ids": []
+}

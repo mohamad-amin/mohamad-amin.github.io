@@ -1,0 +1,111 @@
+{
+  "id": 9,
+  "parent": 1,
+  "short_name": "NorMuon-lite+u/w floor",
+  "edge": {
+    "title": "Add NorMuon-lite normalization + u/w floor 0.35, drop WD, lr .0375",
+    "summary": "Skylight-001 post-processes the baseline Muon update twice. First, NorMuon-lite: an EMA (β2=0.95) of the mean squared NS output along the longer axis (per row; per column for the wide mlp.proj) rescales rows/columns by 1/√EMA, after which the update is rescaled back to its original Frobenius norm, so only the relative row/column magnitudes change. Second, a u/w floor scales the update up whenever ‖u‖_F < 0.35‖W‖_F; decoupled weight decay is no longer applied (the 0.025 passed to the constructor is unused), so the floor takes over WD's job of keeping the relative step size from shrinking as weights grow. Muon lr rises 0.02→0.0375 and the run is shortened to 3250 steps.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "NorMuon-lite normalization after NS",
+        "detail": "muon_update keeps an fp32 second_moment buffer of shape (m,1) if m≥n else (1,n), EMA'd with beta2=0.95 on mean(u²) over the shorter axis; u is multiplied by rsqrt(EMA) (clamp 1e-10) and rescaled to its pre-normalization Frobenius norm.",
+        "symbols": ["muon_update", "second_moment"]
+      },
+      {
+        "type": "added",
+        "label": "u/w floor (TARGET_UW = 0.35)",
+        "detail": "After muon_update, if ‖u‖_F/‖p‖_F < 0.35 the update is multiplied by 0.35‖p‖_F/‖u‖_F (never scaled down); p.add_(update, alpha=-lr) follows, so the floor is on the pre-lr update.",
+        "symbols": ["Muon.step", "TARGET_UW"]
+      },
+      {
+        "type": "removed",
+        "label": "Decoupled weight decay on hidden mats",
+        "detail": "The p.mul_(1 - lr*weight_decay) line is deleted; Muon(...) is still constructed with weight_decay=0.025 but step() never reads it, so effective hidden WD is 0.",
+        "symbols": ["Muon.step"]
+      },
+      {
+        "type": "tuned",
+        "label": "Muon lr 0.02 → 0.0375",
+        "detail": "optimizer2 = Muon(..., lr=0.0375, weight_decay=0.025); aux AdamW groups, betas and the 0.7 linear cooldown are unchanged.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3600 → 3250",
+        "detail": "The schedule now ends at 3250, which is also the claimed step (no early stop).",
+        "symbols": ["train_steps", "set_hparams"]
+      },
+      {
+        "type": "refactor",
+        "label": "NaN guard, logging, comments",
+        "detail": "The training loop raises RuntimeError on a non-finite microbatch loss and logs the device name; docstring/comment edits only.",
+        "symbols": ["print0"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.lr", "label": "Muon lr", "from": "0.02", "to": "0.0375"},
+      {"key": "hidden.wd", "label": "Muon WD (as applied)", "from": "0.01", "to": "0 (ctor weight_decay=0.025 unused)"},
+      {"key": "hidden.beta2", "label": "NorMuon-lite EMA beta2", "from": "—", "to": "0.95"},
+      {"key": "hidden.eps", "label": "NorMuon-lite v clamp", "from": "—", "to": "1e-10"},
+      {"key": "uw_floor.target", "label": "u/w floor target", "from": "—", "to": "0.35"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3600", "to": "3250"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3600", "to": "3250"}
+    ],
+    "techniques_added": ["normuon_lite", "uw_floor"],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "consistent — nearest-code is #1 with an identical skeleton, init and aux AdamW; only muon_update, Muon.step, the Muon lr and train_steps change.",
+    "noise": "Docstring note (Skylight-001), non-finite-loss RuntimeError guard and a device-name log line; the optimizer comment '+ wd=0.025' describes a value the step never applies."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95 → 12 NS iters (2, −1.5, 0.5) → max(1,m/n)^0.5; lr 0.0375, no WD applied"},
+    {"id": "normuon_lite", "note": "EMA(β2 0.95) of mean u² along longer axis → u·rsqrt(EMA), Frobenius norm restored"},
+    {"id": "uw_floor", "note": "per matrix: scale u up to ‖u‖_F = 0.35‖W‖_F when below (never down); replaces WD"},
+    {"id": "aux_adam", "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat for 30%, then linear to 0 at step 3250 (cooldown_frac 0.7), all groups"},
+    {"id": "zero_proj_init", "note": "every param named '*proj*' zeroed (attn/mlp proj + lm head, W and b); rest torch default"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3250",
+    "steps.claimed": "3250",
+    "hidden.optimizer": "Muon + NorMuon-lite + u/w floor",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (weight_decay=0.025 passed but never applied)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95",
+    "hidden.eps": "1e-10",
+    "normuon_lite.axis": "per row if m >= n (q/k/v/attn.proj/mlp.fc), per column for wide mlp.proj",
+    "uw_floor.target": "0.35",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "PyTorch default (U(±1/sqrt(fan_in)))",
+    "init.proj": "zero (names containing 'proj', incl. lm head)",
+    "init.bias": "PyTorch default; proj biases zero"
+  },
+  "mechanisms": [
+    {
+      "id": "normuon_lite",
+      "name": "NorMuon-lite (longer-axis second-moment normalization)",
+      "explain": "Inside muon_update, after NS and the max(1,m/n)^0.5 scale, mean(u²) is taken over the shorter axis — giving one statistic per row for square q/k/v/attn.proj and tall mlp.fc, and per column for the wide mlp.proj — and EMA'd into an fp32 buffer with β2=0.95 (zero init, no bias correction). The update is multiplied by rsqrt(EMA) (clamp 1e-10) and rescaled to its previous Frobenius norm, so Muon's overall step size is kept and only rows/columns with persistently large update RMS are shrunk relative to the rest. Only one axis is tracked (not Adafactor's factored row×column estimate); the rule is numerically the same as #10's NorMuon normalizer.",
+      "symbols": ["muon_update", "second_moment"]
+    },
+    {
+      "id": "uw_floor",
+      "name": "u/w floor (weight-decay-free step-size floor)",
+      "explain": "For each matrix Muon.step computes ‖p‖_F and ‖u‖_F (fp32, clamp 1e-8) and, if ‖u‖/‖p‖ < 0.35, multiplies u by 0.35‖p‖/‖u‖; larger updates are left alone. Since p ← p − lr_t·u afterwards, each step moves a matrix by at least 0.35·lr_t of its own norm, so without WD the relative (angular) step cannot decay as ‖W‖ grows; the floor is inactive while weights are small relative to the orthogonalized update (e.g. the zero-initialized proj matrices early on).",
+      "symbols": ["Muon.step", "TARGET_UW"]
+    }
+  ],
+  "caveats": "Muon is constructed with weight_decay=0.025 and the comment says 'wd=0.025', but step() never applies it — effective hidden WD is 0, matching the table's 'wd-free'. 'NorMuon-lite' is a provenance label (port of track-1's NorMuon): the normalization is the same longer-axis rule used by #10's NorMuon and #8's NorMuonH, not a factored Adafactor estimate; for the wide mlp.proj it normalizes input columns, not output rows. When the u/w floor actually binds depends on weight-norm growth and is not logged.",
+  "new_technique_ids": []
+}

@@ -1,0 +1,264 @@
+{
+  "id": 33,
+  "parent": 1,
+  "short_name": "PSGD Kron + hyperball",
+  "edge": {
+    "title": "Replace Muon with PSGD Kron whitening + hyperball step",
+    "summary": "Hidden matrices are trained with PSGD-Kron: a bias-corrected momentum m̂ (beta 0.95) is preconditioned as (Q0ᵀQ0)·m̂·(Q1ᵀQ1), where upper-triangular Kronecker factors Q0 (rows) and Q1 (cols) are fitted every step by a spectrally-normalized Lie-group gradient step (precond_lr 1.0) that whitens m̂ against a Gaussian probe. The direction goes through a hyperball step (norm preserved, no weight decay), and the hidden matrices are re-drawn Gaussian with the hyperball family's ×1.25/×3.0/×1.5 multipliers; nothing is zeroed, so the LM head and biases keep PyTorch's default init. PSGD lr 0.025 decays linearly from step 0 while aux AdamW decays linearly to 0.1× over the second half; the loss is now mean-reduced, and the record is the step-3375 eval of 3400-step runs.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "PSGD Kron whitening preconditioner",
+        "detail": "PSGDKron.step: exp_avg.lerp_(g, 0.05), m̂ = exp_avg/(1 − 0.95^t); psgd_update_precond fits Q0, Q1 (init s·I, s = mean(|g|⁴)^(−1/32)) from A = Q0 m̂ Q1ᵀ and B = Q0⁻ᵀ v Q1⁻¹ (v ~ N(0,1)) via Q ← Q − (1/‖AAᵀ+BBᵀ‖₂)·triu(AAᵀ − BBᵀ)·Q; direction (Q0ᵀQ0) m̂ (Q1ᵀQ1).",
+        "symbols": [
+          "PSGDKron",
+          "psgd_update_precond",
+          "init_psgd",
+          "spectral_norm"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Hyperball step (inline)",
+        "detail": "new_p = p − lr·u·‖p‖/(‖u‖ + 1e-10); p ← new_p·‖p‖/(‖new_p‖ + 1e-10): the #4/#5 rule written inline with additive eps; Muon's weight decay 0.01 is gone.",
+        "symbols": [
+          "PSGDKron.step"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Gaussian per-module init, no zeroing",
+        "detail": "Block matrices are re-drawn N(0, std²), std = (1/√(3·fan_in))·{mlp.proj 3.0, mlp.fc 1.5, attn.proj 1.25, q/k/v 1.0}; nothing is zeroed, so the LM head and all biases keep PyTorch defaults (#1 zeroed every 'proj' parameter).",
+        "symbols": [
+          "Initialization loop"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Mean-reduced loss, averaged grads",
+        "detail": "cross_entropy reduction 'mean', micro-batch losses divided by num_mbs and grads all_reduce AVG (was sum/SUM), shrinking gradients by the 524,288-token batch; PSGD + hyperball are scale-free, so this mainly shifts AdamW's eps = 1e-10 relative to √v.",
+        "symbols": [
+          "GPT.forward"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Separate PSGD / AdamW schedules",
+        "detail": "get_psgd_lr = 0.025·(1 − step/3400) from step 0 (cooldown_frac 1.0, no warmup); get_adam_lr_scale = 1 until step 1700, then linear to 0.1 at 3400 (was one shared 0.7 cooldown to 0).",
+        "symbols": [
+          "get_psgd_lr",
+          "get_adam_lr_scale"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "3400 steps scheduled, 3375 claimed",
+        "detail": "train_steps = 3400; the record uses the step-3375 validation from the same runs (README's own check was at 3400).",
+        "symbols": [
+          "train_steps"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Skeleton tweaks",
+        "detail": "RMSNorm/QK-norm via F.rms_norm (as in the updated baseline), comments stripped, AdamW referenced as torch.optim.AdamW, padded all_gather loop over len(params_pad), val-loss averaging rewritten for the mean reduction.",
+        "symbols": [
+          "RMSNorm"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3600",
+        "to": "3400"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed step",
+        "from": "3600",
+        "to": "3375"
+      },
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "PSGDKron + hyperball"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.02",
+        "to": "0.025"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "hidden weight decay",
+        "from": "0.01",
+        "to": "0 (hyperball)"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "momentum",
+        "from": "0.95 (Nesterov)",
+        "to": "0.95 (EMA, bias-corrected)"
+      },
+      {
+        "key": "psgd_kron.precond_lr",
+        "label": "preconditioner lr",
+        "from": "—",
+        "to": "1.0"
+      },
+      {
+        "key": "schedule.hidden_cooldown_frac",
+        "label": "PSGD cooldown_frac",
+        "from": "0.7",
+        "to": "1.0"
+      },
+      {
+        "key": "schedule.aux_cooldown_frac",
+        "label": "AdamW cooldown",
+        "from": "0.7 (to 0)",
+        "to": "0.5 (to 0.1×)"
+      },
+      {
+        "key": "init.proj",
+        "label": "proj init",
+        "from": "all 'proj' params zero",
+        "to": "nothing zeroed; LM head default init"
+      },
+      {
+        "key": "loss.reduction",
+        "label": "loss reduction",
+        "from": "sum (grads SUM)",
+        "to": "mean (grads AVG)"
+      }
+    ],
+    "techniques_added": [
+      "psgd_kron",
+      "hyperball",
+      "per_module_init_std",
+      "split_cooldown",
+      "early_stop"
+    ],
+    "techniques_removed": [
+      "muon",
+      "zero_proj_init"
+    ],
+    "techniques_modified": [
+      "linear_cooldown"
+    ],
+    "parent_check": "Inferred parent #1 is the closest script (261 changed lines) and supplies the skeleton, but this is a rewrite that borrows from the hyperball family (#4/#5: the norm-preserving step, the ×1.25/×3.0/×1.5 init multipliers, hidden lr decaying from step 0) and from the updated baseline (F.rms_norm RMSNorm); #5 is a reasonable influence.",
+    "noise": "Comment stripping, the AdamW import change, the F.rms_norm rewrite of RMSNorm/QK-norm, the extra (padding-only) all_gather iteration and the rewritten val-loss averaging."
+  },
+  "techniques": [
+    {
+      "id": "psgd_kron",
+      "note": "whitening Kron P = QᵀQ fit every step on bias-corrected momentum; precond_lr 1.0, triangular Q"
+    },
+    {
+      "id": "hyperball",
+      "note": "inline norm-preserving step on all 72 block matrices; eps 1e-10 additive; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "Gaussian std 1/√(3·fan_in) × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; q/k/v ×1"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "PSGD lr linear to 0 from step 0; AdamW flat to step 1700, then linear to 0.1×"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "AdamW cooldown over the last 50% ending at 0.1× vs PSGD over the full run"
+    },
+    {
+      "id": "early_stop",
+      "note": "train_steps 3400, claimed at the step-3375 eval (PSGD lr ≈0.8% of peak)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3400",
+    "steps.claimed": "3375",
+    "hidden.optimizer": "PSGDKron (Kronecker whitening) + hyperball",
+    "hidden.lr": "0.025",
+    "hidden.wd": "0 (none; hyperball)",
+    "hidden.momentum": "0.95 (EMA, bias-corrected)",
+    "psgd_kron.precond_lr": "1.0",
+    "psgd_kron.precond_freq": "1 (every step)",
+    "psgd_kron.precond_init": "Q0 = Q1 = s·I, s = mean(|g|⁴)^(−1/32)",
+    "psgd_kron.damping": "float32 eps·|m̂| Gaussian noise added before fitting",
+    "hyperball.eps": "1e-10 (additive)",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "PSGD: linear from step 0; AdamW: flat to 50%, then linear to 0.1×",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.5 (ends at 0.1×)",
+    "hyperball.radius": "per-matrix ‖W‖_F at init (expected ≈16 q/k/v, 20 attn.proj, 48 mlp.fc & mlp.proj)",
+    "init.hidden_std": "Gaussian, 1/√(3·fan_in) ≈ 0.0208 (q/k/v)",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "nothing zeroed; LM head keeps default nn.Linear init",
+    "init.bias": "PyTorch default uniform (none zeroed)",
+    "loss.reduction": "mean (grads all_reduce AVG)"
+  },
+  "mechanisms": [
+    {
+      "id": "psgd_kron",
+      "name": "PSGD Kron whitening preconditioner",
+      "explain": "Each hidden matrix has upper-triangular factors Q0 (m×m) and Q1 (n×n), giving P = (Q0ᵀQ0) ⊗ (Q1ᵀQ1). Every step, with A = Q0 m̂ Q1ᵀ and a probe B = Q0⁻ᵀ v Q1⁻¹, each factor takes a multiplicative step Q ← Q − (precond_lr/‖AAᵀ+BBᵀ‖₂)·triu(AAᵀ − BBᵀ)·Q (spectral norm from 1.5 power iterations) after rebalancing the factors' max-abs values, which drives P toward whitening the momentum. The step direction is P applied to m̂, then normalized by the hyperball update.",
+      "symbols": [
+        "psgd_update_precond",
+        "PSGDKron",
+        "spectral_norm",
+        "init_psgd"
+      ]
+    },
+    {
+      "id": "hyperball",
+      "name": "Hyperball step (inline)",
+      "explain": "The PSGD direction is rescaled to Frobenius norm lr·‖W‖ (factor p_norm/(u_norm + 1e-10)), subtracted, and W is rescaled back to its previous norm — the #4/#5 rule written inline with additive eps. With no weight decay, each block matrix keeps its initial norm for the whole run and lr acts as a relative (angular) step.",
+      "symbols": [
+        "PSGDKron.step"
+      ]
+    },
+    {
+      "id": "per_module_init_std",
+      "name": "Per-module Gaussian init",
+      "explain": "Block matrices are re-drawn from N(0, (k/√(3·fan_in))²) with k = 3.0 for mlp.proj, 1.5 for mlp.fc, 1.25 for attn.proj and 1 for q/k/v — the same stds as #4/#5's scaled uniform init. Because the hyperball freezes norms, these fix the radii (expected ≈16/20/48).",
+      "symbols": [
+        "Initialization loop"
+      ]
+    },
+    {
+      "id": "split_cooldown",
+      "name": "Separate PSGD / AdamW schedules",
+      "explain": "The PSGD lr (get_psgd_lr) decays linearly from 0.025 at step 0 to 0 at step 3400. AdamW (get_adam_lr_scale) stays at full LR until step 1700, then decays linearly to 0.1× of its base LR at 3400, so the aux params never anneal to 0.",
+      "symbols": [
+        "get_psgd_lr",
+        "get_adam_lr_scale"
+      ]
+    },
+    {
+      "id": "early_stop",
+      "name": "Early stop before schedule end",
+      "explain": "Runs are scheduled for 3400 steps, but the record is the step-3375 validation from the same logs (25 steps early). There the PSGD lr is ≈0.8% of peak and AdamW is at ≈0.11× of base.",
+      "symbols": [
+        "train_steps"
+      ]
+    }
+  ],
+  "caveats": "The README validates at 3400 steps (mean 3.27666) and notes the count could drop by 20+; the table's 3375 is the step-3375 eval in the same five logs (mean 3.27791). The switch to mean-reduced loss / AVG gradients is an unablated side change that matters mainly to AdamW through eps. The PSGD init scale exponent (−1/32 per factor) is copied from code; README pseudocode does not specify it.",
+  "new_technique_ids": []
+}

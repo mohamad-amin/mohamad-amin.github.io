@@ -1,0 +1,98 @@
+{
+  "id": 41,
+  "parent": 40,
+  "short_name": "Circuit-Muon V/O",
+  "edge": {
+    "title": "Circuit-Muon: per-head coupling of attention V/O Muon updates",
+    "summary": "Adds Circuit-Muon to #40's stack: each block's attn.v/attn.proj pair is updated in a separate coupled pass (computed redundantly on every rank) instead of the sharded round-robin. After each leg's unchanged direction pipeline (momentum → SOAP for V → Contra/NS), V's update is scaled per head by its partner's inverse scalar Gram root s_O,h = (‖W_O,h‖²/128 + 1e-3)^−½ (and O's by s_V,h), each leg is renormalized to its pre-scaling Frobenius norm so only the cross-head anisotropy survives, and the per-head component along the scaling-gauge direction (W_V,h, −W_O,h) is projected out. Intent (README): keep the per-head change of the composed OV map W_O,h·W_V,h balanced as factor norms evolve and stop first-order drift of ‖W_V,h‖² − ‖W_O,h‖²; the radial brake, u/w floor and radius rescale then act per matrix as before.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Circuit-Muon OV coupling",
+        "detail": "circuit_muon() multiplies V/O update heads by the partner's 1/sqrt(‖W_h‖²/hd + λ), restores each leg's total Frobenius norm, then subtracts x_h·(W_V,h, −W_O,h) with x_h = (⟨W_V,h,dV_h⟩ − ⟨W_O,h,dO_h⟩)/(‖W_V,h‖² + ‖W_O,h‖² + 2·hd·λ).",
+        "symbols": ["circuit_muon", "CIRCUIT_OV_DAMPING", "HEAD_DIM"]
+      },
+      {
+        "type": "modified",
+        "label": "V/O moved to a coupled pass",
+        "detail": "Muon.step first runs _circuit_muon_step over the 12 (attn.v, attn.proj) pairs on every rank (_direction → circuit_muon → _finish), then round-robins the other 48 matrices; each leg's SOAP/Contra/NS pipeline and radial/floor/radius post-processing are unchanged.",
+        "symbols": ["_circuit_muon_step", "_direction", "_finish", "_ensure_state", "ov_pairs"]
+      },
+      {
+        "type": "refactor",
+        "label": "Docstring, logging, helper methods",
+        "detail": "New docstring and EXPERIMENT_NAME/INTUITION, two extra log lines; _ensure_state/_direction/_finish restate the existing inline per-param body for use by the coupled pass.",
+        "symbols": ["EXPERIMENT_NAME", "EXPERIMENT_INTUITION"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "circuit_muon.damping", "label": "Circuit-Muon damping λ", "from": "—", "to": "1e-3"},
+      {"key": "circuit_muon.head_dim", "label": "Head dim for per-head scalars", "from": "—", "to": "128 (6 heads)"}
+    ],
+    "techniques_added": ["circuit_muon"],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "consistent: c41_p40 only adds the Circuit-Muon function, the coupled V/O pass and logging; every #40 constant is unchanged.",
+    "noise": "Docstring/experiment-name rewrite, extra print0 lines, and helper methods (_ensure_state/_direction/_finish) that duplicate the inline per-param body."
+  },
+  "techniques": [
+    {"id": "muon", "note": "12 NS iters (a,b,c = 2,−1.5,0.5) on Schatten-4-normalized input; Nesterov-EMA μ; √max(1,m/n)"},
+    {"id": "soap_muon_mlp", "note": "mlp.fc & mlp.proj: eigenbasis-Adam on momentum, basis refresh every 10 steps, β2 0.90"},
+    {"id": "soap_muon_attn", "note": "attn.v only (SOAP blend 0.95, denom floor 0.55); attn.proj trust-gate code dormant"},
+    {"id": "contra_muon", "note": "−0.2 × unit-norm momentum added around the NS step, ramped linearly to 0 by step 2500"},
+    {"id": "aurora", "note": "wide mlp.proj only: 3 D-rescaled NS passes (β=0.25) toward uniform per-hidden-unit leverage"},
+    {"id": "circuit_muon", "note": "12 attn.v↔attn.proj pairs, 6×128 heads: partner post-whiten + gauge projection, λ=1e-3"},
+    {"id": "radial_brake", "note": "outward radial part of the update ×0.5; post-step rescale to first-order target radius"},
+    {"id": "uw_floor", "note": "update scaled up so ‖U‖F/‖W‖F ≥ 0.3825 on every Muon matrix; no weight decay"},
+    {"id": "ema_nesterov", "note": "lookahead 0.3·lr/lr0 along EMA(0.99) of per-step displacement, steps 300–1950"},
+    {"id": "powercool", "note": "min(lr0, c·(2980−t)^1.2) per group: Muon decays from ~594, Adam groups from ~1567"},
+    {"id": "mu_schedule", "note": "μ 0.85→0.95 over first 300 steps; 0.95→0.85 over steps 2800–2900"},
+    {"id": "early_stop", "note": "claimed 2875 vs train_steps 2900"},
+    {"id": "zero_proj_init", "note": "every param named *proj* zeroed: attn.proj, mlp.proj, lm head (weights and biases)"},
+    {"id": "depth_scaled_fc_init", "note": "mlp.fc weight × (1 − 0.30·layer/11)"},
+    {"id": "cgi_gain_init", "note": "norm1/norm2 gains = 1 ∓ 0.14·s, s Rademacher per channel, all 12 blocks"},
+    {"id": "aux_adam", "note": "fused AdamW (bias-corrected): embed 0.3, head 1/320, 1-D 0.01; β(0.8,0.99), eps 1e-10, wd 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "2900",
+    "steps.claimed": "2875",
+    "hidden.optimizer": "Muon (SOAP on mlp.fc/mlp.proj/attn.v) + Contra + Aurora + Circuit-Muon",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (MUON_WEIGHT_DECAY=0.025 passed but never read)",
+    "hidden.momentum": "0.95 (scheduled 0.85→0.95→0.85)",
+    "hidden.nesterov": "True (update = (1−μ)·g + μ·m)",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "hidden.beta2": "0.90 (SOAP second moment and Gram EMA)",
+    "aux.optimizer": "AdamW (fused, bias-corrected)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99)",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "2980",
+    "init.proj": "zero",
+    "init.gains": "CGI Rademacher α=0.14",
+    "depth_scaled_fc_init.alpha": "0.30",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "soap_muon_mlp.precond_freq": "10",
+    "soap_muon_attn.v_blend": "0.95 (denom floor 0.55)",
+    "contra_muon.coeff": "−0.2 → 0 linearly by step 2500",
+    "aurora.K": "3 (β=0.25), wide mlp.proj",
+    "ema_nesterov.lookahead": "0.3·lr/lr0, steps 300–1950",
+    "ema_nesterov.gamma": "0.99",
+    "mu_schedule.cooldown": "100 steps (2800–2900)",
+    "circuit_muon.damping": "1e-3"
+  },
+  "mechanisms": [
+    {
+      "id": "circuit_muon",
+      "name": "Circuit-Muon (attention OV coupling)",
+      "explain": "For each block the V update (heads on rows) and O update (heads on columns) from the normal pipeline are split into 6 heads of 128; with s_V,h = (‖W_V,h‖²/128 + λ)^−½ and s_O,h likewise, dV_h is multiplied by s_O,h and dO_h by s_V,h, then each leg is rescaled back to its original total Frobenius norm. Next x_h = (⟨W_V,h,dV_h⟩ − ⟨W_O,h,dO_h⟩)/(‖W_V,h‖² + ‖W_O,h‖² + 2·128·λ), and dV_h −= x_h·W_V,h, dO_h += x_h·W_O,h removes the component along the rescaling gauge (W_V,h, −W_O,h) that leaves W_O,h·W_V,h unchanged. λ = 1e-3 bounds the scalars at init (zero-init W_O gives s_O ≈ 31.6).",
+      "symbols": ["circuit_muon", "_circuit_muon_step", "CIRCUIT_OV_DAMPING"]
+    }
+  ],
+  "caveats": "README reports n=20 seeds but the results folder holds a single log. The trace-gap conservation is first-order and holds only before post-processing: the radial brake, u/w floor and radius rescale that follow act on whole matrices. Soft-Muon (SOFT_MUON_CEIL=0) and NorMuon-lite (NOR_BETA2=1.0 ⇒ second moment stays zero, uniform rescale undone) remain in the code but are inactive, so they are not listed.",
+  "new_technique_ids": []
+}

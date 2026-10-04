@@ -1,0 +1,162 @@
+{
+  "id": 8,
+  "parent": 5,
+  "short_name": "NorMuonH",
+  "edge": {
+    "title": "Add NorMuon row/col second-moment normalization after NS (NorMuonH)",
+    "summary": "Between Newton–Schulz and the hyperball step, NorMuonH divides the orthogonalized update by the square root of an EMA (beta2 0.95, clamp 1e-10) of its mean square over the short axis — one statistic per row for q/k/v, attn.proj and mlp.fc, and per column for the wide mlp.proj. This equalizes update magnitude across rows (columns), while the hyperball step still fixes the overall step at lr·‖W‖_F, so NorMuon's usual Frobenius re-scaling and any bias correction are unnecessary. Everything else is MuonH (#5); the schedule is shortened to 3275 steps and the record is claimed at the step-3250 validation, 25 steps before the LR reaches 0.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Short-axis second-moment normalization",
+        "detail": "normuon_update: after NS and the aspect-ratio scale, v_new = mean(update²) over the last dim if rows ≥ cols (v shape [rows,1]) else over rows ([1,cols]); v.lerp_(v_new, 1 − 0.95); update ← update·rsqrt(max(v, 1e-10)). v is an fp32 zero-initialized per-matrix buffer, no bias correction.",
+        "symbols": [
+          "normuon_update",
+          "NorMuonH"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Schedule 3325→3275, claim at 3250",
+        "detail": "train_steps = 3275 sets the linear schedules; the reported val loss is the step-3250 eval (26·125), when the hidden lr multiplier is ≈0.008 and aux ≈0.02.",
+        "symbols": [
+          "train_steps"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Renames and docstrings",
+        "detail": "MuonH → NorMuonH and muon_update → normuon_update with updated docstrings; the hyperball helper, init, per-shape optimizer split, lr 0.018 and aux AdamW are untouched.",
+        "symbols": [
+          "NorMuonH",
+          "normuon_update"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "MuonH",
+        "to": "NorMuonH"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "NorMuon v EMA",
+        "from": "—",
+        "to": "0.95"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "NorMuon v clamp",
+        "from": "—",
+        "to": "1e-10"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3325",
+        "to": "3275"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed step",
+        "from": "3325",
+        "to": "3250"
+      }
+    ],
+    "techniques_added": [
+      "normuon",
+      "early_stop"
+    ],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "consistent — nearest code is #5 (70 changed lines), all in the optimizer and train_steps.",
+    "noise": "Renamed optimizer/update function and docstrings; hyperball helper, init, per-shape split and schedule code are unchanged."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "Nesterov momentum 0.95 → NS5 (12 iters) → aspect-ratio scale, before normalization"
+    },
+    {
+      "id": "normuon",
+      "note": "update·rsqrt(EMA_0.95 of short-axis mean square); per row, per column for mlp.proj"
+    },
+    {
+      "id": "hyperball",
+      "note": "all 72 block matrices pinned to init ‖W‖_F; step lr·‖W‖_F then renormalize; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default Kaiming-uniform × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; q/k/v ×1"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "hidden: linear to 0 over 3275 steps (frac 1.0); aux: flat, then last 40%"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "aux AdamW cooldown_frac 0.4 vs hidden 1.0"
+    },
+    {
+      "id": "early_stop",
+      "note": "train_steps 3275, claimed at the step-3250 eval (hidden lr ≈0.8% of peak)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3275",
+    "steps.claimed": "3250",
+    "hidden.optimizer": "NorMuonH (Muon + NorMuon normalization + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball fixes ‖W‖)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "hidden.beta2": "0.95 (NorMuon v EMA)",
+    "hidden.eps": "1e-10 (v clamp)",
+    "normuon.axis": "mean over short axis: per-row v for q/k/v, attn.proj, mlp.fc; per-column v for mlp.proj",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear decay; hidden from step 0, aux after 60%",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "hyperball.radius": "per-matrix ‖W‖_F at init (expected ≈16 q/k/v, 20 attn.proj, 48 mlp.fc & mlp.proj)",
+    "init.hidden_std": "nn.Linear default Kaiming-uniform, std 1/√(3·fan_in) ≈ 0.0208 (q/k/v)",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero"
+  },
+  "mechanisms": [
+    {
+      "id": "normuon",
+      "name": "NorMuon second-moment normalization",
+      "explain": "normuon_update squares the orthogonalized update, averages it over the short axis, and keeps an fp32 EMA v (beta2 0.95) with one entry per row (or per column for the wide mlp.proj); the update is multiplied by rsqrt(max(v, 1e-10)). NS output has orthonormal columns for tall and orthonormal rows for wide matrices, so magnitudes vary along the long axis — exactly the axis this per-row/per-column EMA equalizes. Under the hyperball step only the resulting direction matters, so no Frobenius re-scaling or bias correction is applied.",
+      "symbols": [
+        "normuon_update",
+        "NorMuonH"
+      ]
+    },
+    {
+      "id": "early_stop",
+      "name": "Early stop before schedule end",
+      "explain": "train_steps = 3275 defines the linear schedules, but the claimed result is the validation at step 3250 (a multiple of the 125-step eval interval), 25 steps before the LR reaches 0. At that point the hidden lr multiplier is ≈0.008 and the aux one ≈0.02.",
+      "symbols": [
+        "train_steps",
+        "set_hparams"
+      ]
+    }
+  ],
+  "caveats": "Mechanically this is the same short-axis variance normalization (EMA 0.95, rsqrt, rows for tall/square, columns for wide) as #9's 'NorMuon-lite' and #10's 'NorMuon'; those also restore the pre-normalization Frobenius norm, which the hyperball step makes redundant here. Tagged `normuon` because the record names and cites NorMuon.",
+  "new_technique_ids": []
+}

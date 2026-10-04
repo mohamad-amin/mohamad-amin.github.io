@@ -1,0 +1,137 @@
+{
+  "id": 22,
+  "parent": 12,
+  "short_name": "SpectralDescent mu=0",
+  "edge": {
+    "title": "Drop Muon momentum (mu=0): orthogonalized raw gradient, 8500 steps",
+    "summary": "Muon is run with mu=0, so momentum.lerp_(grad, 1) just copies the current gradient and Newton–Schulz orthogonalizes the raw minibatch gradient each step (stochastic spectral descent); the Nesterov branch is removed from muon_update. With lr=0.03 and wd=0.015 it needs 8225 steps (read 275 steps before the 8500-step schedule ends), about 2.5x #12's 3325, which isolates how much Muon gains from momentum. The README notes this equals Shampoo with betas=(0, 0), precondition_frequency=1 and power −1/4.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Momentum removed (mu=0)",
+        "detail": "optimizer2 = Muon(..., mu=0); muon_update now orthogonalizes `momentum` directly (Nesterov blend deleted), and with mu=0 momentum.lerp_(grad, 1) equals the current gradient.",
+        "symbols": ["muon_update", "optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "lr 0.035 → 0.03, wd 0.025 → 0.015",
+        "detail": "optimizer2 = Muon(lr=0.03, weight_decay=0.015, mu=0): decoupled shrink lr·wd 4.5e-4 per step at peak (was 8.75e-4).",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3350/3325 → 8500/8225",
+        "detail": "train_steps=8500 with the result read at 8225, 275 steps before the end (lr ≈ 4.6% of peak).",
+        "symbols": ["train_steps"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "Muon(mu=0) (spectral descent)"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "Muon mu",
+        "from": "0.95",
+        "to": "0"
+      },
+      {
+        "key": "hidden.nesterov",
+        "label": "Nesterov blend",
+        "from": "True",
+        "to": "removed"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.035",
+        "to": "0.03"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "hidden wd",
+        "from": "0.025",
+        "to": "0.015"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3350",
+        "to": "8500"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3325",
+        "to": "8225"
+      }
+    ],
+    "techniques_added": ["spectral_descent"],
+    "techniques_removed": ["muon"],
+    "techniques_modified": [],
+    "parent_check": "Consistent: a three-line edit of #12's Muon script. The README frames it equally as Shampoo with zero betas (the #21 family), but the code path is Muon.",
+    "noise": ""
+  },
+  "techniques": [
+    {
+      "id": "spectral_descent",
+      "note": "Muon class with mu=0: NS (12 iters) of the raw gradient, lr 0.03, wd 0.015"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged (aux keeps betas (0.8,0.95)): embed 0.3 / head 1/320 / 1-D 0.01"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 8500 steps"
+    },
+    {
+      "id": "early_stop",
+      "note": "claimed at 8225 of 8500 scheduled (lr ≈ 4.6% of peak)"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases zero"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "8500",
+    "steps.claimed": "8225",
+    "hidden.optimizer": "Muon(mu=0) (spectral descent)",
+    "hidden.lr": "0.03",
+    "hidden.wd": "0.015",
+    "hidden.momentum": "0",
+    "hidden.nesterov": "removed",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "spectral_descent",
+      "name": "Stochastic spectral descent",
+      "explain": "Each step replaces the minibatch gradient G = UΣVᵀ of every hidden matrix by its polar factor ≈UVᵀ (12 Newton–Schulz iterations), scales it by sqrt(max(1, rows/cols)) and applies it with decoupled decay, with no averaging over steps. It is steepest descent under the spectral norm and equals (GGᵀ)^-1/4·G·(GᵀG)^-1/4, i.e. Shampoo with zero betas.",
+      "symbols": ["muon_update", "zeropower_via_newtonschulz5"]
+    }
+  ],
+  "caveats": "Run on 1×H200 (world_size 1, 8 micro-batches accumulated per step), which gives the same 524288-token batch by construction. The 275-step early stop is unusually large (lr still ≈4.6% of peak at the readout). n=4, mean 3.2774 at 8225.",
+  "new_technique_ids": []
+}

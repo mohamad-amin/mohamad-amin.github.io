@@ -1,0 +1,11 @@
+modded-nanogpt/
+node_modules/
+out/
+analysis_final/
+records_raw.json
+pairdist.json
+nearest.json
+data.json
+_md_in.json
+_md_out.json
+__pycache__/

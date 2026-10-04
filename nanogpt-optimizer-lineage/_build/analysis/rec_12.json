@@ -1,0 +1,119 @@
+{
+  "id": 12,
+  "parent": 6,
+  "short_name": "Muon lr 0.035",
+  "edge": {
+    "title": "Muon lr 0.025→0.035 (from #10); schedule 3350, report at 3325",
+    "summary": "Raises Muon lr from 0.025 to 0.035 at the same wd=0.025, copying NorMuon #10's lr/wd (lr·wd 6.25e-4 → 8.75e-4 per step at peak). The schedule now spans 3350 steps but the result is read at step 3325, 25 steps before the LR reaches zero (≈1.1% of peak), following #8; validation runs every 25 steps in the last 10% so the stop step can be fixed in advance for all seeds. The README's pairwise test finds these Muon hparams significantly better than #6's.",
+    "changes": [
+      {
+        "type": "tuned",
+        "label": "Muon lr 0.025 → 0.035",
+        "detail": "optimizer2 = Muon(lr=0.035, weight_decay=0.025): the lr/wd pair of NorMuon record #10 applied to plain Muon.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "added",
+        "label": "Early stop 25 steps before end",
+        "detail": "train_steps 3375 → 3350 defines the LR schedule, but the claimed result is the val loss at step 3325, inside the final cooldown (as in #8).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "added",
+        "label": "Validation every 25 steps in last 10%",
+        "detail": "val_step_freq = 125 if step/train_steps < 0.9 else 25, so val is logged every 25 steps from step 3025 on. Eval-only, but it is what makes the 3325 readout possible.",
+        "symbols": ["val_step_freq"]
+      },
+      {
+        "type": "refactor",
+        "label": "Minor cleanups",
+        "detail": "The data loader calls dist.get_world_size()/get_rank() inline and the init loop aliases w = p.data. No behavioral effect.",
+        "symbols": ["distributed_data_generator"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.lr",
+        "label": "Muon lr",
+        "from": "0.025",
+        "to": "0.035"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3375",
+        "to": "3350"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3375",
+        "to": "3325"
+      }
+    ],
+    "techniques_added": ["early_stop"],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "Consistent (declared). This script equals train_gpt_simple.py at git 73ba757 (2026-05-03): the #6 baseline plus the tail-validation, lr and steps edits. Influences: #10 (lr=0.035, wd=0.025) and #8 (25-step early stop).",
+    "noise": "Data-loader inlining of world_size/rank and the w = p.data alias."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "lr 0.035, wd 0.025, mu 0.95 Nesterov, NS 12 iters (2,-1.5,0.5)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3350 steps"
+    },
+    {
+      "id": "early_stop",
+      "note": "claimed at 3325 of 3350 scheduled (lr ≈ 1.1% of peak)"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases zero"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3350",
+    "steps.claimed": "3325",
+    "hidden.optimizer": "Muon",
+    "hidden.lr": "0.035",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "early_stop",
+      "name": "Early stop inside the cooldown",
+      "explain": "The LR schedule is defined over train_steps=3350, but the record reports the val loss at a fixed earlier step (3325) that is the same for every seed, using the 25-step validation grid of the last 10%. This gives up the last ~1% of the linear decay in exchange for fewer counted steps; per the rules the stop point is chosen once for all runs, not per run.",
+      "symbols": ["train_steps", "val_step_freq"]
+    }
+  ],
+  "caveats": "n=20, mean 3.2790 at 3325: (3.28 − 3.27905)·√20 ≈ 0.0043, just above the 0.004 bar. The README uses this record to calibrate the step–loss trade-off: 200 fewer steps raise the mean to 3.2881 (≈0.0045 per 100 steps), and its pairwise test vs #6 gives 0.00648 ≥ 0.004.",
+  "new_technique_ids": []
+}

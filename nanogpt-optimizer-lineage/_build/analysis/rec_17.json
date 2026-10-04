@@ -1,0 +1,117 @@
+{
+  "id": 17,
+  "parent": 11,
+  "short_name": "Aurora + Contra-Muon",
+  "edge": {
+    "title": "Swap NS polar for Aurora; NorMuon-lite dropped; #12-based skeleton",
+    "summary": "Replaces the Newton–Schulz polar factor with Aurora's leverage-uniform polar on the non-square MLP matrices: a row-diagonal D (starting at inverse row norms, refined once with damping 0.5) is applied before NS so the orthogonal factor's row norms approach the uniform value √(n/m) = 0.5; square attention matrices still use plain NS. Contra-Muon (−0.2·ĝ) and the 0.35 u/w floor from #11 are kept, but NorMuon-lite's row/column variance normalization is gone and the script is built on #12's skeleton (Gaussian hidden init, zero biases, bf16 RMSNorm). The run is scheduled for 3200 steps and claimed at 3175.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Polar step → Aurora (MLP matrices)",
+        "detail": "muon_update calls aurora_orthogonalize(pp_iterations=2, pp_beta=0.5): non-square G is transposed to tall, row-equilibrated by D, and polar(D·G) is returned with D refined once toward row norm² = n/m; square matrices fall back to zeropower_via_newtonschulz5.",
+        "symbols": ["aurora_orthogonalize", "muon_update"]
+      },
+      {
+        "type": "removed",
+        "label": "NorMuon-lite variance normalization",
+        "detail": "There is no second_moment state or per-row/column variance rescaling: the Aurora + Contra update goes from the aspect-ratio scale straight to the u/w floor (not mentioned in the README).",
+        "symbols": ["muon_update", "Muon.step"]
+      },
+      {
+        "type": "modified",
+        "label": "Contra-Muon applied to Aurora output",
+        "detail": "Same CONTRA_MUON = 0.4 and 5-step power-iteration normalizer; 0.2·ĝ is subtracted from the Aurora polar factor and the result is rescaled to that factor's Frobenius norm.",
+        "symbols": ["scale_to_unit_operator_norm", "CONTRA_MUON"]
+      },
+      {
+        "type": "modified",
+        "label": "Init and RMSNorm taken from #12",
+        "detail": "Non-proj hidden weights are N(0, 0.33/fan_in) and all biases zero (vs PyTorch default uniform init in #11); RMSNorm uses F.rms_norm(x, weight=gains) in the activation dtype instead of an fp32 upcast.",
+        "symbols": ["RMSNorm.forward", "named_parameters init loop"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3225 → 3200, claim 3175",
+        "detail": "Same linear cooldown (0.7); claimed at the 3175 checkpoint where the LR is ≈1.1% of peak. Muon weight_decay is passed as 0 (effective value unchanged from #11).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "#12 training-loop skeleton",
+        "detail": "num_trials loop, validation every 125 steps then every 25 in the last 10%, no NaN guard, no manual seed, no cuDNN-SDPA disable, docstrings.",
+        "symbols": ["num_trials"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3225", "to": "3200"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3225", "to": "3175"},
+      {"key": "hidden.beta2", "label": "NorMuon-lite beta2", "from": "0.95", "to": "— (NorMuon-lite removed)"},
+      {"key": "aurora.pp_iterations", "label": "Aurora pp_iterations", "from": "—", "to": "2"},
+      {"key": "aurora.pp_beta", "label": "Aurora pp_beta", "from": "—", "to": "0.5"},
+      {"key": "init.bias", "label": "bias init", "from": "PyTorch default U(±1/√fan_in) (non-proj)", "to": "0"},
+      {"key": "init.hidden_std", "label": "hidden weight init", "from": "PyTorch default (uniform, std 1/√(3·fan_in))", "to": "0.33**0.5 / fan_in**0.5 (Gaussian)"}
+    ],
+    "techniques_added": ["aurora", "early_stop"],
+    "techniques_removed": ["normuon_lite"],
+    "techniques_modified": [],
+    "parent_check": "Declared #11, but the code is #12's script plus Aurora and #11's Contra-Muon/u/w floor (nearest-code #12; the c17_p12 diff touches only the optimizer section, train_steps and the Muon constructor). From #11 it carries Contra-Muon (CONTRA_MUON = 0.4) and the u/w floor (TARGET_UW = 0.35) with lr 0.0375 and wd 0, but NOT NorMuon-lite; init, RMSNorm and the training loop are #12's.",
+    "noise": "Most of the textual diff vs #11 is #12's skeleton: inlined world_size/rank in the dataloader, num_trials loop, val cadence, removed seed/NaN-guard/cuDNN-SDPA lines, constants inlined, docstrings and comments."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95, 12 NS iters, √max(1, m/n) scale, lr 0.0375, wd 0; plain NS on square attn mats"},
+    {"id": "aurora", "note": "MLP fc/proj: polar(D·G), row-diagonal D, pp_iterations=2, pp_beta=0.5, target row norm² n/m"},
+    {"id": "contra_muon", "note": "0.2·M/σ̂max(M) subtracted from the Aurora polar factor (CONTRA_MUON=0.4), norm restored"},
+    {"id": "uw_floor", "note": "update scaled up to ‖u‖_F/‖w‖_F = 0.35 when below (TARGET_UW); weight_decay=0"},
+    {"id": "aux_adam", "note": "AdamW lr embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat, then linear to 0 over the last 70% of 3200 steps (all groups)"},
+    {"id": "zero_proj_init", "note": "'proj' weights zeroed; all biases zero, other weights N(0, 0.33/fan_in) (#12-style)"},
+    {"id": "early_stop", "note": "claimed at step 3175 of 3200 scheduled (LR ≈1.1% of peak)"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3200",
+    "steps.claimed": "3175",
+    "hidden.optimizer": "Muon with Aurora polar + Contra-Muon + u/w floor (no NorMuon-lite)",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12 (per NS call; Aurora makes 2 calls on MLP matrices)",
+    "aurora.pp_iterations": "2",
+    "aurora.pp_beta": "0.5",
+    "aurora.eps": "1e-7",
+    "aurora.scope": "non-square matrices (mlp.fc 3072×768, mlp.proj 768×3072)",
+    "contra_muon.coeff": "0.4 (CONTRA_MUON; subtracts 0.2 × normalized momentum)",
+    "uw_floor.target": "0.35",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear_cooldown",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "0.33**0.5 / fan_in**0.5 (Gaussian)",
+    "init.embed_std": "1 (normal_())",
+    "init.proj": "zero",
+    "init.bias": "zero",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "aurora",
+      "name": "Aurora leverage-uniform polar",
+      "explain": "For a tall momentum matrix G (m > n; wide ones are transposed first), Aurora sets D = 1/‖G_i‖ per row, computes U = NS(D·G), then updates D ← D·((n/m)/‖U_i‖²)^0.5 and recomputes U = NS(D·G) (pp_iterations = 2). This equilibrates the row norms (leverage scores) of the orthogonal factor toward √(n/m) = 0.5, so no single fc output neuron or proj input column receives an outsized share of the update. Square attention matrices have no leverage freedom and use plain NS.",
+      "symbols": ["aurora_orthogonalize", "zeropower_via_newtonschulz5"]
+    },
+    {
+      "id": "early_stop",
+      "name": "Mid-cooldown claim",
+      "explain": "The linear schedule decays to 0 at train_steps = 3200, but the record is claimed at the fixed step-3175 checkpoint for all 20 seeds, where the LR is ≈1.1% of peak. Validation runs every 25 steps in the last 10% of training.",
+      "symbols": ["train_steps", "val_step_freq"]
+    }
+  ],
+  "caveats": "The README says the only algorithmic change vs #11 is polar(G) → polar(D·G), but the code also drops NorMuon-lite and changes init (zero biases, Gaussian hidden weights), so the Aurora effect is confounded with removing NorMuon-lite. The README's z = 0.886 / p = 0.188 omits the √n factor; the record qualifies via the precision criterion (3.28 − μ)·√20 = 0.00517 at step 3175. Aurora only changes the 24 non-square MLP matrices.",
+  "new_technique_ids": []
+}

@@ -1,0 +1,189 @@
+{
+  "id": 27,
+  "parent": 19,
+  "short_name": "SOAP-H",
+  "edge": {
+    "title": "Swap KL-SOAP for plain SOAP; power-1.25 hidden LR decay to step 3200",
+    "summary": "Replaces KL-SOAP with standard SOAP inside the same hyperball step: the eigenbasis comes from plain Shampoo statistics (L ← 0.9L + 0.1·GGᵀ, R ← 0.9R + 0.1·GᵀG, with no KL whitening or eigenvalue tracking) refreshed every step by one power-iteration + QR, momentum 0.95 is kept in parameter space, and an Adam second moment (EMA 0.9, eps 1e-8, no bias correction) lives in the eigenbasis. Effective betas match #19 (0.95/0.9/0.9), and the first step now updates the weights instead of only initializing state. The hidden LR becomes (1 − step/3200)^1.25, a power-law decay over a 3200-step horizon cut off at 3125 steps (final hidden LR ≈0.9% of peak), while aux AdamW keeps its linear last-40% cooldown.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Shampoo factors instead of KL-Shampoo",
+        "detail": "soap_update: left_buffer ← 0.9·L + 0.1·G Gᵀ and right_buffer ← 0.9·R + 0.1·Gᵀ G (addmm, unnormalized); the KL-whitened targets and eigen_sqrt_inv estimates of #19 are gone.",
+        "symbols": [
+          "soap_update",
+          "SOAPH"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Momentum kept in parameter space",
+        "detail": "momentum_buffer (lerp 0.05 toward G) stays in the original basis and is projected with the current Q each step, so refreshes need no rotation; square_buffer (0.9 EMA of (Q_Lᵀ G Q_R)²) stays in the eigenbasis unrotated; U = Q_L·(M̃/(√V + 1e-8))·Q_Rᵀ.",
+        "symbols": [
+          "soap_update",
+          "SOAPH._step_param"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Basis init/refresh; no init-only step",
+        "detail": "_init_state sets Q from eigh of the first G Gᵀ and Gᵀ G (factor buffers start at 0) and the same step updates W; _refresh_q does Q ← QR(L·Q) every q_freq = 1 steps after the update is computed.",
+        "symbols": [
+          "SOAPH._init_state",
+          "SOAPH._refresh_q",
+          "_initial_orthogonal_matrix"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Power-1.25 hidden LR decay to 3200",
+        "detail": "Hidden groups get schedule_steps = lr_steps = 3200, lr_power = 1.25, lr_floor = 0 in the _eta helper (verbatim from #25), i.e. eta = (1 − step/3200)^1.25 from step 0; AdamW keeps schedule_steps = 3125, power 1, floor 0 (linear, last 40%).",
+        "symbols": [
+          "_eta",
+          "set_hparams",
+          "lr_steps",
+          "lr_power"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Distribution, compile and seeding",
+        "detail": "Round-robin parameter ownership with a per-param dist.broadcast (was padded all_gather), numel sort, torch.compile on soap_update, closure/sparse checks, SOAP_SEED env (default 1).",
+        "symbols": [
+          "SOAPH.step"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "KLSOAPH",
+        "to": "SOAPH"
+      },
+      {
+        "key": "soap.factor_stats",
+        "label": "basis statistics",
+        "from": "KL-Shampoo: G R̂⁻¹ Gᵀ/cols (+ eigenvalue EMAs)",
+        "to": "Shampoo: EMA of G Gᵀ / Gᵀ G"
+      },
+      {
+        "key": "schedule.kind",
+        "label": "hidden LR schedule",
+        "from": "linear 1 − step/3125",
+        "to": "(1 − step/3200)^1.25"
+      },
+      {
+        "key": "schedule.power",
+        "label": "hidden decay power",
+        "from": "1",
+        "to": "1.25"
+      },
+      {
+        "key": "schedule.end_step",
+        "label": "hidden schedule horizon",
+        "from": "3125",
+        "to": "3200"
+      }
+    ],
+    "techniques_added": [
+      "soap",
+      "powercool",
+      "early_stop"
+    ],
+    "techniques_removed": [
+      "kl_soap"
+    ],
+    "techniques_modified": [
+      "linear_cooldown"
+    ],
+    "parent_check": "consistent with declared #19, which is also the nearest code (363 changed lines; the optimizer was rewritten). The schedule helper _eta is verbatim from sibling #25 (power + floor form), so #25 is an influence; #27 uses power 1.25, no floor, hidden groups only, horizon 3200.",
+    "noise": "SOAPH is written as a general torch.optim class (closure, sparse/2-D checks, hyperparameter print), uses round-robin broadcast instead of all_gather, sorts by numel, compiles soap_update, and renames the seed env to SOAP_SEED."
+  },
+  "techniques": [
+    {
+      "id": "soap",
+      "note": "Shampoo-EMA eigenbasis (β 0.9), QR refresh every step; momentum 0.95; Adam v 0.9 in eigenbasis"
+    },
+    {
+      "id": "hyperball",
+      "note": "all 72 block matrices pinned to init ‖W‖_F; step lr·‖W‖_F then renormalize; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default init × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; LM head + proj biases zero"
+    },
+    {
+      "id": "powercool",
+      "note": "hidden only: η = (1 − step/3200)^1.25, no floor"
+    },
+    {
+      "id": "early_stop",
+      "note": "stops at 3125 of the 3200-step hidden schedule (hidden LR ≈0.9% of peak at the end)"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "aux AdamW only: flat, then linear to 0 over the last 40% of 3125 steps"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "AdamW linear cooldown over the last 40% vs hidden full-run power decay"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3125",
+    "steps.claimed": "3125",
+    "schedule.end_step": "3200 (hidden lr_steps); 3125 (aux)",
+    "schedule.kind": "hidden: (1 − step/3200)^1.25; aux: flat then linear over last 40%",
+    "schedule.power": "1.25 (hidden only)",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "hidden.optimizer": "SOAPH (SOAP direction + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball)",
+    "hidden.momentum": "0.95 (EMA, parameter space)",
+    "hidden.beta2": "0.9 (ema_beta, shared with factor EMAs)",
+    "hidden.eps": "1e-8",
+    "soap.shampoo_beta": "0.9 (same ema_beta)",
+    "soap.precond_freq": "1 (q_freq)",
+    "soap.bias_correction": "none",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero"
+  },
+  "mechanisms": [
+    {
+      "id": "soap",
+      "name": "SOAP-H (SOAP + hyperball)",
+      "explain": "Each matrix keeps Shampoo factor EMAs L = EMA(G Gᵀ) and R = EMA(Gᵀ G) (beta 0.9) and an eigenbasis Q_L, Q_R advanced by one power-iteration + QR per step. The momentum (0.95) is projected into the current basis, divided elementwise by the root of an Adam second moment kept in that basis (0.9, eps 1e-8), and rotated back. The resulting SOAP direction is passed to the hyperball step at lr 0.018.",
+      "symbols": [
+        "soap_update",
+        "SOAPH",
+        "SOAPH._refresh_q"
+      ]
+    },
+    {
+      "id": "powercool",
+      "name": "Power-law hidden LR decay",
+      "explain": "_eta returns floor + (1−floor)·x^power with x = 1 − step/schedule_steps for cooldown_frac 1.0. The hidden groups use power 1.25, floor 0 and a 3200-step horizon, so the LR falls faster than linear early and ends at ≈0.9% of peak when training stops at 3125; aux AdamW keeps power 1 over 3125 steps.",
+      "symbols": [
+        "_eta",
+        "set_hparams"
+      ]
+    }
+  ],
+  "caveats": "All six runs were on a single H100 NVL (world_size 1, 8 accumulated micro-batches), unlike most records. The README's 'w.o. bias correction' is not a change from #19, which had none either; under the hyperball step it would only rescale the update uniformly. beta2 and the Shampoo factor beta are one shared ema_beta = 0.9.",
+  "new_technique_ids": []
+}

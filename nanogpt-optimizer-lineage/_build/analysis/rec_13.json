@@ -1,0 +1,178 @@
+{
+  "id": 13,
+  "parent": 8,
+  "short_name": "MuLoCo + NorMuonH",
+  "edge": {
+    "title": "Wrap NorMuonH in MuLoCo outer Nesterov SGD (H=30, lr 0.7, mom 0.5)",
+    "summary": "Adds a MuLoCo-style outer optimizer (Algorithm 1 with one worker, K=1) around the unchanged NorMuonH + AdamW inner loop: every 30 inner steps the displacement Δ = θ_snapshot − θ of every parameter is treated as a pseudo-gradient and an outer Nesterov-SGD step is taken from the snapshot (u ← 0.5u + 0.7Δ; θ ← θ_snapshot − 0.5u − 0.7Δ). This extrapolates past the inner endpoint — 1.05Δ at the first sync and up to ≈1.4Δ once momentum builds for aligned Δ — a lookahead-style acceleration. The runs set TRAIN_STEPS=3210 (exactly 107 syncs, the last one right before the final eval) and OUTER_LR=0.7 via env vars, with #8's schedules and no early stop. The outer step is not re-projected onto the hyperball, so hidden-matrix norms are only fixed between syncs.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "MuLoCo outer Nesterov wrapper",
+        "detail": "NesterovOuterOptimizer(list(model.parameters())) snapshots all params; maybe_outer_step() after each inner step runs _outer_step every SYNC_INTERVAL = 30 steps: delta = snapshot − p; u = mom·u + olr·delta; p = snapshot − mom·u − olr·delta; then re-snapshot.",
+        "symbols": [
+          "NesterovOuterOptimizer",
+          "maybe_outer_step",
+          "_outer_step"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Outer hparams via env vars",
+        "detail": "OUTER_LR (code default 0.5; all runs 0.7), OUTER_MOMENTUM 0.5, SYNC_INTERVAL 30, USE_OUTER_OPTIMIZER on by default; logs print 'olr=0.7 omom=0.5 H=30 train_steps=3210'.",
+        "symbols": [
+          "OUTER_LR",
+          "OUTER_MOMENTUM",
+          "SYNC_INTERVAL",
+          "USE_OUTER_OPTIMIZER"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3275→3210, no early stop",
+        "detail": "train_steps = int(TRAIN_STEPS) (code default 3240 = 108·30; runs 3210 = 107·30); the claim is the final-step eval, whereas #8 claimed step 3250 of 3275.",
+        "symbols": [
+          "train_steps",
+          "TRAIN_STEPS"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Hyperball norms move at syncs",
+        "detail": "_outer_step overwrites p.data with no renormalization, so a NorMuonH matrix's Frobenius norm can change at each sync; subsequent scale_invariant_update_ calls then preserve the new norm.",
+        "symbols": [
+          "_outer_step",
+          "scale_invariant_update_"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Env plumbing and logging",
+        "detail": "Env-var parsing, an ENABLED/DISABLED print, and a trailing newline; NorMuonH, init, aux AdamW and set_hparams are byte-identical to #8.",
+        "symbols": []
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3275",
+        "to": "3210 (env; code default 3240)"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed step",
+        "from": "3250",
+        "to": "3210"
+      },
+      {
+        "key": "muloco.outer_lr",
+        "label": "outer lr",
+        "from": "—",
+        "to": "0.7 (env; code default 0.5)"
+      },
+      {
+        "key": "muloco.outer_momentum",
+        "label": "outer Nesterov momentum",
+        "from": "—",
+        "to": "0.5"
+      },
+      {
+        "key": "muloco.sync_interval",
+        "label": "sync interval H",
+        "from": "—",
+        "to": "30"
+      }
+    ],
+    "techniques_added": [
+      "muloco"
+    ],
+    "techniques_removed": [
+      "early_stop"
+    ],
+    "techniques_modified": [
+      "hyperball"
+    ],
+    "parent_check": "consistent — declared parent #8 is also the nearest code (70 changed lines, all additive).",
+    "noise": "Env-var plumbing, the ENABLED/DISABLED print and a trailing newline; the optimizer, init and schedule code are unchanged from #8."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "Nesterov momentum 0.95 → NS5 (12 iters) inside NorMuonH"
+    },
+    {
+      "id": "normuon",
+      "note": "short-axis EMA(0.95) second-moment normalization of the NS output, as in #8"
+    },
+    {
+      "id": "hyperball",
+      "note": "inner steps preserve ‖W‖_F; outer syncs can change it (no re-projection)"
+    },
+    {
+      "id": "muloco",
+      "note": "outer Nesterov SGD on all params every 30 steps, lr 0.7 (env), mom 0.5; 107 syncs"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default Kaiming-uniform × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; LM head zero"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "hidden: linear to 0 over 3210 steps (frac 1.0); aux: flat, then last 40%"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "aux AdamW cooldown_frac 0.4 vs hidden 1.0"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3210 (env TRAIN_STEPS; code default 3240)",
+    "steps.claimed": "3210",
+    "hidden.optimizer": "NorMuonH (Muon + NorMuon normalization + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95 (NorMuon v EMA)",
+    "hidden.eps": "1e-10 (v clamp)",
+    "muloco.outer_lr": "0.7 (env OUTER_LR; code default 0.5)",
+    "muloco.outer_momentum": "0.5",
+    "muloco.sync_interval": "30",
+    "muloco.outer_steps": "107",
+    "muloco.scope": "all model.parameters() (NorMuonH and AdamW params)",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear decay; hidden from step 0, aux after 60%",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero"
+  },
+  "mechanisms": [
+    {
+      "id": "muloco",
+      "name": "MuLoCo outer Nesterov SGD (K=1)",
+      "explain": "NesterovOuterOptimizer stores a snapshot and an outer momentum buffer u for every parameter. After every 30th inner step it forms the pseudo-gradient Δ = snapshot − θ, sets u ← 0.5u + 0.7Δ and resets θ ← snapshot − 0.5u − 0.7Δ (Nesterov form), then re-snapshots. With a single worker this is a periodic momentum extrapolation of the inner trajectory (1.05Δ at the first sync, ≈1.4Δ in steady state for aligned Δ), applied to hidden and AdamW parameters alike.",
+      "symbols": [
+        "NesterovOuterOptimizer",
+        "_outer_step",
+        "maybe_outer_step"
+      ]
+    }
+  ],
+  "caveats": "Code defaults (TRAIN_STEPS=3240, OUTER_LR=0.5) are not what ran: all 10 logs print 'MuLoCo outer optimizer ENABLED: olr=0.7 omom=0.5 H=30 train_steps=3210', matching the table, so hparams list the run values. The size of the hidden-norm drift from un-projected outer steps is not measured here; extrapolating past a chord of the sphere tends to push norms outward.",
+  "new_technique_ids": []
+}

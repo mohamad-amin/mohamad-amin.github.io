@@ -1,0 +1,93 @@
+{
+  "id": 10,
+  "parent": 6,
+  "short_name": "NorMuon",
+  "edge": {
+    "title": "Swap Muon for NorMuon (per-row/col 2nd-moment norm), lr 0.025→0.035",
+    "summary": "Hidden matrices switch from Muon to NorMuon: after Nesterov momentum, 12 NS iterations and the max(1,m/n)^0.5 scale, an EMA (β2=0.95) of the mean squared update along the longer axis (per row; per column for the wide mlp.proj) rescales the update by 1/√EMA, which is then rescaled back to its original Frobenius norm. This evens out update RMS across neurons while keeping Muon's overall step size; decoupled WD stays at 0.025 and the lr rises 0.025→0.035. train_steps drops 3375→3300 and the result is claimed at the step-3250 validation, 50 steps before the LR reaches 0.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "NorMuon optimizer for hidden matrices",
+        "detail": "New normuon_update/NorMuon: Muon's momentum→NS→aspect scale, then second_momentum (fp32, (m,1) if m≥n else (1,n)) lerps toward mean(u²) with 1−0.95 (hard-coded), u *= rsqrt(clamp(v,1e-10)) in bf16, and u is rescaled to its pre-normalization Frobenius norm; WD and lr applied as in Muon.",
+        "symbols": ["normuon_update", "NorMuon", "second_momentum"]
+      },
+      {
+        "type": "tuned",
+        "label": "Hidden lr 0.025 → 0.035",
+        "detail": "optimizer2 = NorMuon(..., lr=0.035, weight_decay=0.025); aux AdamW and init unchanged.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3375 → 3300, claim 3250",
+        "detail": "The linear cooldown (frac 0.7) now ends at 3300; the claimed 3250 is a regular 125-step validation reached with the LR at ≈2% of peak.",
+        "symbols": ["train_steps", "set_hparams"]
+      },
+      {
+        "type": "refactor",
+        "label": "Loader/init cosmetics, dead Muon class",
+        "detail": "distributed_data_generator calls dist.get_world_size()/get_rank() inline, init uses a w = p.data alias, and the original Muon class stays in the file unused.",
+        "symbols": ["distributed_data_generator", "Muon"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.optimizer", "label": "hidden optimizer", "from": "Muon", "to": "NorMuon"},
+      {"key": "hidden.lr", "label": "hidden lr", "from": "0.025", "to": "0.035"},
+      {"key": "hidden.beta2", "label": "NorMuon EMA beta2", "from": "—", "to": "0.95"},
+      {"key": "hidden.eps", "label": "NorMuon v clamp", "from": "—", "to": "1e-10"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3375", "to": "3300"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3375", "to": "3250"}
+    ],
+    "techniques_added": ["normuon", "early_stop"],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "consistent — nearest-code is #6: same num_trials harness, #6 normal init and aux AdamW; only the hidden optimizer class, its lr and train_steps change.",
+    "noise": "Inline dist.get_world_size()/get_rank() in the data generator, a w = p.data alias in init, and the unused Muon class left in place."
+  },
+  "techniques": [
+    {"id": "muon", "note": "core path: Nesterov mu=0.95 → 12 NS iters → max(1,m/n)^0.5; decoupled WD 0.025"},
+    {"id": "normuon", "note": "EMA(β2 0.95) of mean u² along longer axis → u·rsqrt(EMA), Frobenius norm restored; lr 0.035"},
+    {"id": "aux_adam", "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat for 30%, then linear to 0 at step 3300 (cooldown_frac 0.7)"},
+    {"id": "early_stop", "note": "train_steps 3300, claimed at the step-3250 eval (LR ≈2% of peak)"},
+    {"id": "zero_proj_init", "note": "proj weights (attn/mlp/lm head) zero; others N(0, 0.33/fan_in); all biases 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3300",
+    "steps.claimed": "3250",
+    "hidden.optimizer": "NorMuon",
+    "hidden.lr": "0.035",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95",
+    "hidden.eps": "1e-10",
+    "normuon.axis": "per row if m >= n (q/k/v/attn.proj/mlp.fc), per column for wide mlp.proj",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.embed_std": "1.0 (normal)",
+    "init.proj": "zero",
+    "init.bias": "zero",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "normuon",
+      "name": "NorMuon second-moment normalization",
+      "explain": "normuon_update runs the usual Muon pipeline, then averages u² over the shorter axis (one value per row for q/k/v/attn.proj/mlp.fc, per column for the wide mlp.proj), lerps an fp32 buffer toward it with weight 0.05 (β2=0.95, no bias correction) and multiplies u by rsqrt(max(v, 1e-10)). The result is rescaled to the pre-normalization Frobenius norm, so the global step size stays Muon's (lr·max(1,m/n)^0.5·‖NS‖) and only the relative per-neuron magnitudes change; decoupled WD lr·0.025 is applied before the step as in Muon.",
+      "symbols": ["normuon_update", "NorMuon"]
+    }
+  ],
+  "caveats": "Despite the 'full NorMuon' vs 'NorMuon-lite' naming, this normalizer is numerically identical to #9's NorMuon-lite (same shape-dependent axis, β2 0.95, clamp 1e-10, Frobenius restore, no bias correction); #9 and #10 differ in WD (0.025 here vs none + u/w floor), lr, init and steps. For the wide mlp.proj (768×3072) the statistic is per input column, not per output neuron. The table's 'end 50 steps early' matches train_steps 3300 vs the 3250 claim.",
+  "new_technique_ids": []
+}

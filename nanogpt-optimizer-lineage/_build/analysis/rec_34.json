@@ -1,0 +1,219 @@
+{
+  "id": 34,
+  "parent": 30,
+  "short_name": "Late capped RRE",
+  "edge": {
+    "title": "Late capped RRE extrapolation of hidden weights every 5 steps",
+    "summary": "Adds a late reduced-rank-extrapolation (RRE) overlay to the unchanged #30 optimizer: from step 2820 the flattened vector of all Muon hidden matrices is snapshotted after every step, and every 5 steps (2825, 2830, …, 2925: 21 times) an RRE combination of the last 4 snapshots (3 consecutive step differences, ridge 1e-6) is computed, damped 0.875 toward the current weights, capped at 0.1% of the global hidden-weight norm and written back, keeping momentum and SOAP state. Training stops at 2925 (RUN_STOP_STEP) while the 3020/3050 schedule horizon stays as in #30. Because of how the RRE weights are accumulated (see caveats), in practice each jump is a capped pull back along the last few steps, closer to iterate averaging than to forward extrapolation.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Late RRE overlay on hidden matrices",
+        "detail": "Muon.step calls _maybe_extrapolate after the all_gather: from next_step ≥ 2820 it appends the flattened Muon params to a 4-deep history and every 5th step (through EXTRAPOLATION_STOP_STEP=2925) runs rre_extrapolate with damping 0.875 and a 1e-3 relative cap, writes the result back and restarts the history; momentum is kept (EXTRAPOLATION_RESET_MOMENTUM=0).",
+        "symbols": [
+          "_maybe_extrapolate",
+          "rre_extrapolate",
+          "_unflatten_params",
+          "EXTRAPOLATION_RESET_MOMENTUM",
+          "EXTRAPOLATION_STOP_STEP"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Training loop ends at 2925",
+        "detail": "run_stop_step (env RUN_STOP_STEP=2925) ends the loop with a final validation; train_steps=3020 still defines the μ cooldown (2920–3020) and PowerCool end stays 3050.",
+        "symbols": [
+          "run_stop_step",
+          "RUN_STOP_STEP"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Env-driven experiment harness",
+        "detail": "Alternative extrapolators (MPE, MPE-Sidi, Anderson, VEA, STEA, quadratic, RRE blends/tsvd/subspace, layer/tensor-wise RRE), taper/block caps, momentum projection, LR sprint, checkpoint save/load and model/batch env knobs are added but inactive in the record config.",
+        "symbols": [
+          "mpe_extrapolate",
+          "anderson_extrapolate",
+          "_lr_sprint_scale_at_step",
+          "save_checkpoint"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "2930",
+        "to": "2925"
+      },
+      {
+        "key": "rre.start_step",
+        "label": "RRE first snapshot step",
+        "from": "none",
+        "to": "2820"
+      },
+      {
+        "key": "rre.every",
+        "label": "RRE period",
+        "from": "none",
+        "to": "5"
+      },
+      {
+        "key": "rre.num_checkpoints",
+        "label": "RRE history (iterates)",
+        "from": "none",
+        "to": "4 (3 differences)"
+      },
+      {
+        "key": "rre.damping",
+        "label": "RRE damping",
+        "from": "none",
+        "to": "0.875"
+      },
+      {
+        "key": "rre.max_rel",
+        "label": "RRE move cap ‖Δ‖/‖θ‖",
+        "from": "none",
+        "to": "0.001"
+      },
+      {
+        "key": "rre.regularization",
+        "label": "RRE ridge",
+        "from": "none",
+        "to": "1e-6·tr(G)/k"
+      },
+      {
+        "key": "rre.stop_step",
+        "label": "RRE stop step",
+        "from": "none",
+        "to": "2925"
+      },
+      {
+        "key": "rre.reset_momentum",
+        "label": "momentum reset after jump",
+        "from": "none",
+        "to": "False"
+      }
+    ],
+    "techniques_added": [
+      "rre"
+    ],
+    "techniques_removed": [],
+    "techniques_modified": [
+      "early_stop"
+    ],
+    "parent_check": "consistent: behaviorally identical to #30 apart from the RRE hook and the 2925 stop; the extracted script defaults EXTRAPOLATION_NAME='none', and the RRE settings come from env vars printed in all 8 seed logs (identical to the README and train_gpt_simple_rre_pr300_2925.py)",
+    "noise": "~700 lines of inactive extrapolation variants and harness knobs (taper/block caps, momentum projection, LR sprint, checkpointing, MODEL_*/batch env overrides at their defaults), SEED readable from env, extra extrap_* fields in log lines."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "momentum lerp + grad.lerp(buf, μ); 12 NS iters (2, −1.5, 0.5); ×max(1,m/n)^½"
+    },
+    {
+      "id": "soap_muon_mlp",
+      "note": "SOAP preconditioning of mlp.fc & mlp.proj momentum before NS; freq 10, β2 0.90"
+    },
+    {
+      "id": "soap_muon_attn",
+      "note": "attn.v only: SOAP blend 0.95, denom floor 0.55, ungated"
+    },
+    {
+      "id": "contra_muon",
+      "note": "−0.2·G/‖G‖₄ term fading linearly to 0 at step 2500"
+    },
+    {
+      "id": "aurora",
+      "note": "mlp.proj only: K=3 leverage-rebalanced NS rounds, β=0.25"
+    },
+    {
+      "id": "uw_floor",
+      "note": "‖u‖/‖w‖ raised to 0.3825 on all hidden matrices"
+    },
+    {
+      "id": "radial_brake",
+      "note": "outward radial ×0.5, inward ×1.0; post-step radius rescale"
+    },
+    {
+      "id": "rre",
+      "note": "all Muon matrices jointly; steps 2825–2925 every 5; 4 iterates, damping 0.875, cap 1e-3"
+    },
+    {
+      "id": "powercool",
+      "note": "lr = min(lr0, c·(3050−t)^1.2) per group, power 1.2"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "implicit via per-group c: Muon decays from ≈ step 664, AdamW groups from ≈ step 1637"
+    },
+    {
+      "id": "mu_schedule",
+      "note": "μ 0.85→0.95 over 0–300; cooldown 2920–3020 (only 5 steps before 2925)"
+    },
+    {
+      "id": "early_stop",
+      "note": "loop stops and claims at 2925 vs train_steps 3020"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "every param with 'proj' in its name zeroed"
+    },
+    {
+      "id": "depth_scaled_fc_init",
+      "note": "mlp.fc weight × (1 − 0.30·l/11)"
+    },
+    {
+      "id": "cgi_gain_init",
+      "note": "norm1/norm2 gains 1∓0.14·s, Rademacher s"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3, head 1/320, 1-D 0.01; betas (0.8, 0.99), wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3020",
+    "steps.claimed": "2925",
+    "hidden.optimizer": "Muon + SOAP (MLP, V) + Contra-Muon + Aurora (mlp.proj) + late RRE",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (0.025 passed but unused)",
+    "hidden.momentum": "0.85→0.95→0.85 (scheduled)",
+    "hidden.ns_iters": "12 (3×12 for mlp.proj)",
+    "aux.optimizer": "AdamW",
+    "aux.betas": "(0.8, 0.99)",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "3050",
+    "schedule.hidden_cooldown_frac": "≈0.782 of 3050, derived (Muon flat until ≈664)",
+    "schedule.aux_cooldown_frac": "≈0.463 of 3050, derived (AdamW flat until ≈1637)",
+    "contra_muon.coeff": "-0.2",
+    "contra_muon.ramp_end_step": "2500",
+    "aurora.K": "3",
+    "aurora.beta": "0.25",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "rre.start_step": "2820",
+    "rre.every": "5",
+    "rre.num_checkpoints": "4",
+    "rre.damping": "0.875",
+    "rre.max_rel": "0.001",
+    "rre.regularization": "1e-6",
+    "rre.reset_momentum": "False",
+    "rre.stop_step": "2925",
+    "rre.param_filter": "all Muon hidden matrices"
+  },
+  "mechanisms": [
+    {
+      "id": "rre",
+      "name": "Late capped RRE extrapolation",
+      "explain": "From next_step 2820 the concatenated Muon weights are pushed into a history of at most 4 snapshots; when next_step % 5 == 0 and the history is full, rre_extrapolate forms the 3 differences U, solves (UUᵀ + 1e-6·tr/3·I)c = 1, normalizes Σc = 1, and returns x_last − Σ_j γ_j Δ_j with γ = reverse-cumsum(c). The result is lerped 0.875 of the way from the current weights, the global move is capped at 1e-3·‖θ‖, written back into every hidden matrix, and the history restarts from the new point (so each jump uses the last 3 optimizer steps); momentum and SOAP statistics are left untouched.",
+      "symbols": [
+        "_maybe_extrapolate",
+        "rre_extrapolate",
+        "extrap_scheduled_value"
+      ]
+    }
+  ],
+  "caveats": "In the script captured in the logs every RRE knob is an env var with an off default (EXTRAPOLATION_NAME='none', EVERY=20, DAMPING=1.0, MAX_REL=0, RESET_MOMENTUM=1); the record values come from the run environment, as printed in every log header (rre every=5 start=2820 checkpoints=4 damping=0.875 max_rel=0.001 reset_momentum=False stop=2925, run_stop_step=2925). Code detail: γ is the reverse cumulative sum of c, so the output equals x₀ + c₀Δ₁ + (c₀+c₁)Δ₂ (x₀ = oldest snapshot) rather than textbook RRE/RNA Σcᵢxᵢ; with c ≥ 0 (typical for noisy late steps) the damped, capped correction pulls the weights back along the last steps, i.e. capped iterate averaging rather than forward extrapolation. Logs agree: extrap_rel is pinned at the 1e-3 cap through step 2870 in all 8 seeds, then falls in exact proportion to the LR (≈6.7e-4 at 2925 in every seed, ≈1.6× the per-step relative move lr·0.3825), i.e. a near-deterministic ~1.6-step move. README's 'k=4' counts stored iterates (3 difference vectors). Table notes p=0.168 vs #30; runs used world_size=1 (single H100).",
+  "new_technique_ids": []
+}

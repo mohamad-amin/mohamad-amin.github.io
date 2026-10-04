@@ -1,0 +1,83 @@
+{
+  "id": 11,
+  "parent": 9,
+  "short_name": "Contra-Muon",
+  "edge": {
+    "title": "Add Contra-Muon: subtract 0.2× spectrally normalized momentum after NS",
+    "summary": "Keeps #9's NorMuon-lite + u/w-floor Muon and inserts Contra-Muon inside muon_update: a copy of the Nesterov momentum M is scaled to unit spectral norm (5-step power iteration), and after Newton–Schulz 0.2·M/σ̂max (CONTRA_MUON/2) is subtracted and the result is rescaled to the NS output's Frobenius norm. With M = UΣVᵀ and NS(M) ≈ UVᵀ this maps singular values to ≈ 1 − 0.2·σ/σmax instead of 1, damping the dominant momentum directions relative to weak ones (an anti-gradient tilt meant to diversify the update). Everything downstream (aspect scale, NorMuon-lite, u/w floor 0.35, lr 0.0375, effective wd 0) is unchanged; the run is shortened from 3250 to 3225 steps.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Contra-Muon term around NS",
+        "detail": "muon_update computes normalized_grad = scale_to_unit_operator_norm(M) before NS, then update = NS(M) − CONTRA_MUON/2 · normalized_grad with CONTRA_MUON = 0.4, rescaled to ‖NS(M)‖_F before the aspect-ratio scale, NorMuon-lite and the u/w floor.",
+        "symbols": ["muon_update", "scale_to_unit_operator_norm", "CONTRA_MUON"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3250 → 3225",
+        "detail": "The linear cooldown (cooldown_frac 0.7) now ends at 3225, which is also the claimed step; extra validation at 3150/3175/3200/3225.",
+        "symbols": ["train_steps", "extra_val_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Constants hoisted, seeding, logging",
+        "detail": "MU, MUON_LR, MUON_WEIGHT_DECAY and TARGET_UW become module constants with unchanged values; torch.manual_seed(SEED) from env (default 0); cuDNN SDPA backend disabled; config prints; no step-0 validation.",
+        "symbols": ["SEED", "MU", "MUON_LR", "MUON_WEIGHT_DECAY", "TARGET_UW"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3250", "to": "3225"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3250", "to": "3225"},
+      {"key": "contra_muon.coeff", "label": "CONTRA_MUON", "from": "—", "to": "0.4 (subtracts 0.2·ĝ)"}
+    ],
+    "techniques_added": ["contra_muon"],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "consistent — nearest-code is #9; the diff vs #9 is exactly the Contra-Muon insertion plus constant hoisting, seeding and logging.",
+    "noise": "Docstring, module-level constants with unchanged values, env SEED + torch.manual_seed, cuDNN SDPA disabled (backend/numerics only), config prints, validation-loop refactor (skips step 0, extra late checkpoints)."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95, 12 NS iters (2, −1.5, 0.5), Frobenius pre-norm, √max(1, m/n) scale, lr 0.0375"},
+    {"id": "contra_muon", "note": "u = NS(M) − 0.2·M/σ̂max(M) (CONTRA_MUON=0.4), rescaled to ‖NS(M)‖_F; σ̂max by 5 power iters"},
+    {"id": "normuon_lite", "note": "variance EMA (β2 0.95) along longer dim: per row (tall/square) or column (wide); ‖·‖_F restored"},
+    {"id": "uw_floor", "note": "update scaled up to ‖u‖_F/‖w‖_F = 0.35 when below; wd 0.025 passed but never applied"},
+    {"id": "aux_adam", "note": "AdamW lr embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat, then linear to 0 over the last 70% of 3225 steps (all groups)"},
+    {"id": "zero_proj_init", "note": "every param with 'proj' in its name zeroed (attn/mlp proj and lm head, weights and biases)"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3225",
+    "steps.claimed": "3225",
+    "hidden.optimizer": "Muon + Contra-Muon + NorMuon-lite + u/w floor",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 effective (MUON_WEIGHT_DECAY=0.025 passed, never applied)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95 (NorMuon-lite variance EMA)",
+    "contra_muon.coeff": "0.4 (CONTRA_MUON; subtracts CONTRA_MUON/2 = 0.2 × normalized momentum)",
+    "contra_muon.normalizer": "spectral norm via 5 power iterations",
+    "uw_floor.target": "0.35",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear_cooldown",
+    "schedule.cooldown_frac": "0.7",
+    "init.proj": "zero (all params with 'proj' in name, incl. lm head and biases)",
+    "init.hidden_std": "PyTorch default Linear init"
+  },
+  "mechanisms": [
+    {
+      "id": "contra_muon",
+      "name": "Contra-Muon",
+      "explain": "Before Newton–Schulz, a copy of the Nesterov momentum M is divided by its spectral norm, estimated with 5 power iterations from an all-ones vector. After NS, CONTRA_MUON/2 = 0.2 times this normalized momentum is subtracted and the result is rescaled to the Frobenius norm of the NS output, so the singular-value map becomes ≈ 1 − 0.2·σ/σmax: dominant directions get slightly smaller steps than weak ones. The result then passes through the aspect scale, NorMuon-lite and the u/w floor as before.",
+      "symbols": ["scale_to_unit_operator_norm", "muon_update", "CONTRA_MUON"]
+    }
+  ],
+  "caveats": "MUON_WEIGHT_DECAY=0.025 is printed and stored but Muon.step never applies it (the README acknowledges effective wd 0; same as #9). The 'normalized gradient' is the Nesterov-blended momentum (the NS input), not the raw gradient, and σ̂max is a 5-iteration power-method estimate. The table reports p=0.69 vs #9, so the 25-step gain over #9 itself is not statistically established.",
+  "new_technique_ids": []
+}

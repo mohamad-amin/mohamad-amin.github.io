@@ -1,0 +1,134 @@
+{
+  "id": 23,
+  "parent": 12,
+  "short_name": "Muown",
+  "edge": {
+    "title": "Replace Muon by Muown (row weight-norm g·v/‖v‖) + power-law cooldown",
+    "summary": "MuownDP reparametrizes every hidden matrix row-wise as W = g·v/‖v‖: the direction v takes a Nesterov-momentum, 12-step Polar Express orthogonalized step of size lr·0.2·√max(m,n) computed from the tangential weight-norm gradient, while the per-row gains g get bias-corrected Adam at the same lr; there is no weight decay. A v-norm schedule moves the stored ‖v‖ from its initial row norm toward 2.496 (×3.33 for mlp.proj) with progress ((t−1)/3164)^1.2, so the angular step shrinks over training on top of the LR schedule, which becomes a power-0.9 cooldown whose horizon (3165) lies past train_steps (3090, claimed 3075). Aux AdamW lrs are raised (embed 0.6, head 0.009375, 1-D 0.03).",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Muown weight-norm optimizer (MuownDP)",
+        "detail": "_wn_pre_ns rebuilds v = (W/g)·v_norm and splits ∇W into grad_g = Σ_row ∇W·(W/g) and grad_v = (g/v_norm)(∇W − (W/g)·grad_g); v ← v − lr·0.2·√max(m,n)·polar(grad_v + 0.95·m_v) with m_v ← 0.95·m_v + grad_v; _wn_recompose writes W = g·v_new/‖v_new‖_row.",
+        "symbols": ["MuownDP", "_wn_pre_ns", "_wn_recompose"]
+      },
+      {
+        "type": "added",
+        "label": "Adam on per-row gains g, no WD",
+        "detail": "g (init = row norms; all-zero rows → 0.33**0.5) gets bias-corrected Adam with betas (0.9, 0.95), eps 1e-8 at the Muown lr; neither g nor v has weight decay.",
+        "symbols": ["MuownDP._init_state_2d", "MuownDP.step"]
+      },
+      {
+        "type": "added",
+        "label": "V-norm schedule (angular step decay)",
+        "detail": "After each step v_norm = lerp(v_norm_init, 2.496·family_mult, min((t−1)/3164, 1)^1.2), mult 3.333 for mlp.proj and 1 elsewhere; a larger stored ‖v‖ makes the same v step a smaller rotation of W's rows.",
+        "symbols": ["_power_v_norm", "V_NORM_TARGET_SCALE", "V_NORM_FAMILY_MULT"]
+      },
+      {
+        "type": "modified",
+        "label": "Polar Express orthogonalization",
+        "detail": "zeropower_via_polar_express_long uses 8 tuned (a, b, c) quintic coefficient triples (the last repeated) for 12 iterations instead of the fixed (2, −1.5, 0.5) polynomial.",
+        "symbols": ["zeropower_via_polar_express_long", "POLAR_EXPRESS_LONG_COEFFS"]
+      },
+      {
+        "type": "modified",
+        "label": "Power-law cooldown, horizon 3165",
+        "detail": "lr_eta = 1 until 30% of LR_SCHEDULE_STEPS=3165, then ((1 − step/3165)/0.7)^0.9 for both optimizers; with train_steps 3090 the LR ends at ≈5% of peak instead of 0.",
+        "symbols": ["lr_eta", "LR_POWER", "LR_SCHEDULE_STEPS"]
+      },
+      {
+        "type": "tuned",
+        "label": "Aux AdamW lrs ×2 / ×3",
+        "detail": "embed 0.3 → 0.6, head 1/320 → 0.009375, 1-D 0.01 → 0.03; betas (0.8, 0.95), eps 1e-10, wd 0 unchanged.",
+        "symbols": ["LR_EMBED", "LR_HEAD", "LR_1D"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3350 → 3090, claim 3075",
+        "detail": "25-step validation after 90% of 3090; 3075 is an intermediate checkpoint (LR ≈5.7% of peak).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Harness rewrite",
+        "detail": "DATA_DIR/glob loader with a missing-file error, RANK/WORLD_SIZE env, fixed num_trials=30 with per-trial model rebuild and seeds 0–29, config print, complexity-sorted params broadcast from their owner rank instead of all_gather.",
+        "symbols": ["distributed_data_generator", "_param_to_complexity"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.optimizer", "label": "hidden optimizer", "from": "Muon", "to": "MuownDP (Muown)"},
+      {"key": "hidden.lr", "label": "hidden lr", "from": "0.035", "to": "0.00325 (v step = lr·0.2·√max(m,n); also g Adam lr)"},
+      {"key": "hidden.wd", "label": "hidden WD", "from": "0.025", "to": "0 (none)"},
+      {"key": "hidden.ns_iters", "label": "orthogonalization", "from": "12 NS (2, −1.5, 0.5)", "to": "12 Polar Express"},
+      {"key": "muown.direction_scale", "label": "direction scale", "from": "—", "to": "0.2"},
+      {"key": "muown.v_norm_target", "label": "v-norm target", "from": "—", "to": "2.496 (mlp.proj ×3.33333333333)"},
+      {"key": "muown.v_norm_schedule_power", "label": "v-norm ramp power", "from": "—", "to": "1.2 over 3165 steps"},
+      {"key": "schedule.kind", "label": "LR schedule", "from": "stable then linear decay", "to": "stable then power-law decay"},
+      {"key": "schedule.power", "label": "cooldown power", "from": "1", "to": "0.9"},
+      {"key": "schedule.end_step", "label": "LR schedule horizon", "from": "3350 (= train_steps)", "to": "3165"},
+      {"key": "aux.embed_lr", "label": "embed lr", "from": "0.3", "to": "0.6"},
+      {"key": "aux.head_lr", "label": "head lr", "from": "1/320", "to": "0.009375"},
+      {"key": "aux.scalar_lr", "label": "1-D lr", "from": "0.01", "to": "0.03"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3350", "to": "3090"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3325", "to": "3075"}
+    ],
+    "techniques_added": ["muown", "powercool"],
+    "techniques_removed": ["muon", "linear_cooldown"],
+    "techniques_modified": ["aux_adam"],
+    "parent_check": "Inferred #12 is a reasonable base (keeps #12's init, aux groups and 25-step late validation), but the optimizer and harness are rewritten. The nearest-code #21 (Shampoo) is dated 05/13, after #23 (05/10), and shares only the #12-family harness.",
+    "noise": "Harness rewrite: env-driven DATA_DIR/RANK/WORLD_SIZE, 30 seeded trials in one process with model rebuilds, config print, per-step time print removed, owner-rank broadcasts, docstrings."
+  },
+  "techniques": [
+    {"id": "muown", "note": "W=g·v/‖v‖ rows; v: Nesterov→Polar Express(12)×lr·0.2√max(m,n); g: Adam; no WD"},
+    {"id": "powercool", "note": "((1−t/3165)/0.7)^0.9 after 30%; horizon past train_steps 3090 (LR ≈5% at end)"},
+    {"id": "early_stop", "note": "train_steps 3090, claimed at the step-3075 eval"},
+    {"id": "aux_adam", "note": "AdamW embed 0.6 / head 0.009375 / 1-D 0.03, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "zero_proj_init", "note": "proj weights zeroed, but Muown gives zero rows gain 0.33**0.5 → row norm ≈0.574 after step 1"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3090",
+    "steps.claimed": "3075",
+    "hidden.optimizer": "MuownDP (Muown)",
+    "hidden.lr": "0.00325",
+    "hidden.wd": "0 (none)",
+    "hidden.momentum": "0.95 (m = 0.95m + g; Nesterov g + 0.95m)",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12 (Polar Express coefficients)",
+    "muown.direction_scale": "0.2 (× √max(m,n))",
+    "muown.gain_betas": "(0.9, 0.95)",
+    "muown.gain_eps": "1e-8",
+    "muown.v_norm_target": "2.496 (mlp.proj ×3.33333333333)",
+    "muown.v_norm_schedule_steps": "3165",
+    "muown.v_norm_schedule_power": "1.2",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.6",
+    "aux.head_lr": "0.009375",
+    "aux.scalar_lr": "0.03",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then power-law decay",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.power": "0.9",
+    "schedule.end_step": "3165",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.proj": "zero (Muown gain for zero rows: 0.33**0.5)",
+    "init.bias": "zero"
+  },
+  "mechanisms": [
+    {
+      "id": "muown",
+      "name": "Muown (weight-normalized Muon with row-norm control)",
+      "explain": "MuownDP treats each hidden matrix as rows W_i = g_i·v_i/‖v_i‖: every step it rebuilds v with the scheduled row norm v_norm, takes the weight-norm gradients (grad_g = radial component of each row's gradient; grad_v = (g/v_norm)·tangential part), steps v by −lr·0.2·√max(m,n)·PolarExpress12(grad_v + 0.95·m_v) with m_v ← 0.95·m_v + grad_v, steps g by bias-corrected Adam (0.9, 0.95, eps 1e-8) at the same lr, and writes back W = g·v_new/‖v_new‖ (no weight decay). Row norms of W are therefore set only by the Adam-trained gains, while the direction gets an orthogonalized step whose angular size is lr·0.2·√max(m,n)/v_norm per row. After each step v_norm ← lerp(v_norm_init, 2.496·mult, ((t−1)/3164)^1.2) (≈0.574 → 2.496, ≈4.3× growth; ≈14.5× for mlp.proj), an explicit angular step-size decay that replaces what WD-free weight-norm growth would do implicitly.",
+      "symbols": ["MuownDP.step", "_wn_pre_ns", "_wn_recompose", "_power_v_norm", "zeropower_via_polar_express_long"]
+    },
+    {
+      "id": "powercool",
+      "name": "Power-law cooldown with a schedule horizon past the run",
+      "explain": "lr_eta(step) is 1 while step < 0.3·3165 and ((1 − step/3165)/0.7)^0.9 afterwards — equivalently min(1, c·(T − t)^0.9) — applied to AdamW and Muown alike. Because LR_SCHEDULE_STEPS=3165 exceeds train_steps=3090, training stops while the LR is still ≈5% of peak.",
+      "symbols": ["lr_eta", "set_hparams", "LR_SCHEDULE_STEPS", "LR_POWER"]
+    }
+  ],
+  "caveats": "readmes/rec_23.md describes an earlier submission (lr_muown 0.0035, v-norm target 2.688, embed lr 0.9, smoothstep v-norm interpolation, separate linear cooldowns, 3200 steps, 10 seeds → 3125) that matches the folder's other log (97782bd6); the record's log (a26c8aa2) uses lr 0.00325, target 2.496, embed lr 0.6, a ((t−1)/3164)^1.2 ramp, a power-0.9 cooldown to 3165, 3090 steps and 30 trials (claimed 3075). The zero-initialized hidden proj matrices get gain 0.33**0.5 per row at state init, so after the first Muown step their rows have norm ≈0.574: the zero init lasts one step. 'PowerCool' here is #23's own ((1−p)/0.7)^0.9 form, not #20's per-group c·(t_end−t)^1.2 constants.",
+  "new_technique_ids": []
+}

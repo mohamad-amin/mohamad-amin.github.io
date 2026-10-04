@@ -1,0 +1,107 @@
+{
+  "id": 15,
+  "parent": 12,
+  "short_name": "Newton-Muon",
+  "edge": {
+    "title": "Right-precondition grads by inverse input covariance before Muon",
+    "summary": "Newton-Muon keeps #12's Muon step but first right-multiplies every hidden gradient by the inverse of a ridge-damped EMA of its layer's input second-moment matrix E[xxᵀ], i.e. an input-side (K-FAC-like) whitening applied before momentum and Newton–Schulz. The statistics are collected by forward hooks on one training step in 64, and on that same step the stats are all-reduced, folded into the EMA and inverted by batched Cholesky; between refreshes the cached inverse is reused every step. Hidden lr/wd are split per family (q/k/v 0.020, attn.proj 0.025, MLP 0.030; mlp.fc wd 0.0375) and train_steps drops 3350→3300, claimed at 3275.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Input-covariance stats via hooks",
+        "detail": "On steps with (step+1) % 64 == 0, forward hooks on attn.q (shared by q/k/v), attn.proj, mlp.fc and mlp.proj add xᵀx/N per microbatch to non-persistent fp32 buffers; mlp.proj's 3072-d input uses a 4-block diagonal (4×768×768) approximation.",
+        "symbols": ["accum_xtx_", "precond_stat_hook", "enable_precond_hooks", "attach_precond_stats"]
+      },
+      {
+        "type": "added",
+        "label": "Cholesky refresh every 64 steps",
+        "detail": "_refresh_preconditioner all-reduces stats and counts, averages them, EMAs into cov (lerp 0.05, init 0.001·I), adds a ridge 0.2·mean(diag)+1e-8 and computes inv by batched cholesky_ex + cholesky_inverse, then zeroes the accumulators.",
+        "symbols": ["Muon._refresh_preconditioner", "Muon.attach_preconditioner", "refresh_interval"]
+      },
+      {
+        "type": "added",
+        "label": "G ← G·inv before Muon momentum",
+        "detail": "_precondition_grads (from the first refresh at step 63 onward, every step) right-multiplies each hidden grad by its layer's inverse (block-wise bmm for mlp.proj), then muon_update/WD run unchanged.",
+        "symbols": ["Muon._precondition_grads", "Muon.step"]
+      },
+      {
+        "type": "tuned",
+        "label": "Per-family lr / wd groups",
+        "detail": "Single group lr 0.035 / wd 0.025 becomes q/k/v 0.020/0.025, attn.proj 0.025/0.025, mlp.fc 0.030/0.0375, mlp.proj 0.030/0.025.",
+        "symbols": ["optimizer2", "qkv_params", "mlp_fc_params"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3350 → 3300, claim 3275",
+        "detail": "Same 25-step validation after 90%; 3275 is reached 25 steps before the LR hits 0.",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Muon accepts param-group dicts",
+        "detail": "Constructor sorts params inside dict groups, state init checks 'momentum' (state also holds 'precond'), and a global_step counter is synced from the training loop.",
+        "symbols": ["Muon.__init__", "global_step"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.lr", "label": "hidden lr", "from": "0.035", "to": "q/k/v 0.020, attn.proj 0.025, mlp.fc 0.030, mlp.proj 0.030"},
+      {"key": "hidden.wd", "label": "hidden WD", "from": "0.025", "to": "0.025 (mlp.fc 0.0375)"},
+      {"key": "newton_muon.refresh_interval", "label": "preconditioner refresh", "from": "—", "to": "64"},
+      {"key": "newton_muon.cov_ema", "label": "covariance EMA weight", "from": "—", "to": "0.05 per refresh"},
+      {"key": "newton_muon.damping", "label": "ridge", "from": "—", "to": "0.2·mean(diag(cov)) + 1e-8"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3350", "to": "3300"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3325", "to": "3275"}
+    ],
+    "techniques_added": ["newton_muon"],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "consistent — nearest-code is #12; all of #12's Muon, aux AdamW, init and validation cadence are kept, with the preconditioner and per-family groups added.",
+    "noise": "Docstring filename change, Muon constructor accepting dict groups, 'momentum' not in state check, global_step bookkeeping."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95 → 12 NS iters → max(1,m/n)^0.5, decoupled WD; per-family lr/wd"},
+    {"id": "newton_muon", "note": "G·(EMA E[xxᵀ] + 0.2·mean-diag·I)^-1 before momentum; stats + Cholesky every 64 steps"},
+    {"id": "aux_adam", "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat for 30%, then linear to 0 at step 3300 (cooldown_frac 0.7)"},
+    {"id": "early_stop", "note": "train_steps 3300, claimed at the step-3275 eval"},
+    {"id": "zero_proj_init", "note": "proj weights (attn/mlp/lm head) zero; others N(0, 0.33/fan_in); all biases 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3300",
+    "steps.claimed": "3275",
+    "hidden.optimizer": "Muon + Newton-Muon right preconditioning",
+    "hidden.lr": "q/k/v 0.020, attn.proj 0.025, mlp.fc 0.030, mlp.proj 0.030",
+    "hidden.wd": "0.025 (mlp.fc 0.0375)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "newton_muon.refresh_interval": "64 (refresh on (step+1) % 64 == 0)",
+    "newton_muon.stats": "xᵀx/N from the forward pass of the refresh step only",
+    "newton_muon.cov_ema": "0.05 per refresh (lerp)",
+    "newton_muon.cov_init": "0.001·I",
+    "newton_muon.damping": "0.2·mean(diag(cov)) + 1e-8",
+    "newton_muon.mlp_proj_blocks": "4 diagonal 768×768 blocks",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.proj": "zero",
+    "init.bias": "zero"
+  },
+  "mechanisms": [
+    {
+      "id": "newton_muon",
+      "name": "Newton-Muon (activation-covariance right preconditioning)",
+      "explain": "Forward hooks, attached only on steps with (step+1)%64==0, add xᵀx/N of each layer's input to a buffer: one 768×768 matrix shared by q/k/v, one each for the attn.proj and mlp.fc inputs, and a 4-block diagonal approximation for mlp.proj's 3072-d input. On those steps the optimizer all-reduces and averages the stats, lerps them into an EMA covariance (weight 0.05, init 0.001·I) and inverts cov + (0.2·tr(cov)/d + 1e-8)·I with batched Cholesky. Every step after the first refresh, each hidden gradient G (out×in) is replaced by G·inv before Muon's momentum, Newton–Schulz and decoupled WD, so the orthogonalized step is taken in input-whitened coordinates.",
+      "symbols": ["accum_xtx_", "Muon._refresh_preconditioner", "Muon._precondition_grads"]
+    }
+  ],
+  "caveats": "Possible no-op in the logged runs (not verified by running): the hooks are registered on submodules of a model already compiled with model.compile() and run before step 63, and PyTorch's default torch._dynamo.config.skip_nnmodule_hook_guards=True means hooks added after compilation are not executed by the compiled graph. If so, count stays 0, the EMA weight is 0, cov stays 0.001·I and inv is a uniform ≈833·I — plain Muon with the per-family lr/wd retune plus a near momentum reset at step 63 (grads jump ~833×). Independently, steps 0–62 use no preconditioner, every rank preconditions every hidden grad (redundant compute), and the intended identity fallback for a failed Cholesky writes into a masked copy (K[info != 0]) so it has no effect (failures are unlikely given the 0.2·mean-diag ridge).",
+  "new_technique_ids": []
+}

@@ -1,0 +1,126 @@
+{
+  "id": 1,
+  "parent": null,
+  "short_name": "Muon baseline",
+  "edge": {
+    "title": "Baseline: Muon (lr 0.02, wd 0.01) + aux AdamW, WSD, 3600 steps",
+    "summary": "Root script (train_gpt_simple.py). All 72 hidden 2-D block weights (q, k, v, attn.proj, mlp.fc, mlp.proj) use Muon: an EMA momentum (mu=0.95) with a Nesterov blend, 12 Newton–Schulz iterations of a convergent quintic (2, −1.5, 0.5) toward the polar factor, sqrt(max(1, rows/cols)) scaling, and decoupled decay p *= 1 − lr·wd (lr=0.02, wd=0.01). The token embedding, untied LM head and all 1-D params (RMSNorm gains, biases) use AdamW; every group follows a flat-then-linear-to-zero schedule over the last 70% of 3600 steps, and every parameter named 'proj' (including the LM head) starts at zero.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Muon on hidden block matrices",
+        "detail": "muon_update: momentum.lerp_(grad, 1-mu), Nesterov blend grad.lerp_(momentum, mu), orthogonalize, scale by max(1, rows/cols)**0.5 (2x for mlp.fc). Muon.step does p.mul_(1 - lr*wd) then p.add_(update, alpha=-lr); matrices are size-sorted, sharded round-robin over ranks and all_gather'ed.",
+        "symbols": ["muon_update", "Muon", "optimizer2"]
+      },
+      {
+        "type": "added",
+        "label": "Convergent Newton–Schulz, 12 iters",
+        "detail": "zeropower_via_newtonschulz5 casts to bf16, divides by the Frobenius norm (+1e-7) and runs 12 steps of X <- 2X - 1.5(XXᵀ)X + 0.5(XXᵀ)²X, a quintic with fixed point 1 and zero slope there (accuracy-oriented, not the speedrun's speed-tuned coefficients).",
+        "symbols": ["zeropower_via_newtonschulz5"]
+      },
+      {
+        "type": "added",
+        "label": "Aux AdamW for embed/head/1-D",
+        "detail": "optimizer1 = AdamW groups: embed.weight lr=0.3, LM head proj.weight lr=1/320, every ndim<2 param (RMSNorm gains and all biases) lr=0.01; betas=(0.8, 0.95), eps=1e-10, weight_decay=0, fused=True.",
+        "symbols": ["optimizer1"]
+      },
+      {
+        "type": "added",
+        "label": "Stable-then-linear-decay LR",
+        "detail": "set_hparams(step, cooldown_frac=0.7): eta=1 while step/train_steps < 0.3, then eta=(1-progress)/0.7 down to 0; multiplies every group's initial_lr in both optimizers. No warmup; Muon momentum is constant.",
+        "symbols": ["set_hparams"]
+      },
+      {
+        "type": "added",
+        "label": "Zero-init of every 'proj' param",
+        "detail": "Any parameter whose name contains 'proj' is zeroed: attn.proj and mlp.proj weights/biases and the untied LM head (model.proj) weight/bias. All others keep PyTorch defaults (Linear weights and biases U(±1/sqrt(fan_in)), embedding N(0,1), gains 1).",
+        "symbols": ["model.named_parameters"]
+      },
+      {
+        "type": "added",
+        "label": "Fixed benchmark harness",
+        "detail": "GPT-2-small: 12 layers, d=768, 6 heads x 128, QK RMSNorm, half-truncated RoPE, ReLU² MLP, biased Linears, bf16 embedding, logit soft-cap 15. Batch 8x64x1024 tokens, loss reduction='sum' with SUM all-reduce; val on 20x524288 tokens every 125 steps.",
+        "symbols": ["GPT", "distributed_data_generator"]
+      }
+    ],
+    "hparams_changed": [],
+    "techniques_added": ["muon", "aux_adam", "linear_cooldown", "zero_proj_init"],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "Root record (no parent). The logged script is identical to records/track_3_optimization/train_gpt_simple.py at git b011285 (2026-04-26).",
+    "noise": ""
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "lr 0.02, wd 0.01, mu 0.95 Nesterov, NS 12 iters (2,-1.5,0.5); all 72 block 2-D weights"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), eps 1e-10, wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "flat for first 30%, then linear to 0 (cooldown_frac 0.7), same eta for all groups"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "attn.proj, mlp.proj and LM head (model.proj): weights and biases zeroed"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3600",
+    "steps.claimed": "3600",
+    "hidden.optimizer": "Muon",
+    "hidden.lr": "0.02",
+    "hidden.wd": "0.01",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "torch default nn.Linear U(±1/sqrt(fan_in)), std ≈ 0.0208 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "torch default U(±1/sqrt(fan_in)) for q/k/v/fc; proj biases zero",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "muon",
+      "name": "Muon",
+      "explain": "Each hidden matrix keeps an EMA of its gradient (mu=0.95) and forms the Nesterov blend (1−mu)·g + mu·m. Twelve Newton–Schulz iterations push all singular values of that matrix toward 1 (≈UVᵀ of its SVD), so every direction moves by the same amount regardless of gradient magnitude. The result is scaled by sqrt(max(1, rows/cols)) and applied with the scheduled lr after decoupled decay p *= 1 − lr·wd.",
+      "symbols": ["muon_update", "zeropower_via_newtonschulz5", "Muon"]
+    },
+    {
+      "id": "aux_adam",
+      "name": "Auxiliary AdamW",
+      "explain": "Parameters that are not hidden 2-D matrices (token embedding, untied LM head, RMSNorm gains, all biases) use torch AdamW with per-group learning rates 0.3 / 1/320 / 0.01, betas (0.8, 0.95), eps 1e-10 and no weight decay. Because the loss is summed over all 524288 tokens, gradients are large and eps=1e-10 is negligible, so the updates are effectively scale-free.",
+      "symbols": ["optimizer1"]
+    },
+    {
+      "id": "linear_cooldown",
+      "name": "Stable-then-linear-decay (WSD) LR",
+      "explain": "set_hparams multiplies every group's initial lr by eta = 1 while step/train_steps < 0.3, then by (1 − progress)/0.7, reaching 0 at train_steps. Because Muon's decay is p *= 1 − lr·wd with the scheduled lr, weight decay is annealed together with the step size.",
+      "symbols": ["set_hparams"]
+    },
+    {
+      "id": "zero_proj_init",
+      "name": "Zero-initialized projections",
+      "explain": "Attention and MLP output projections start at zero, so every residual block is initially the identity map; the untied LM head is also zero, so initial predictions are uniform (logged step-0 val loss 10.826 = ln 50304). The blocks grow their contributions from the first Muon steps.",
+      "symbols": ["model.named_parameters"]
+    }
+  ],
+  "caveats": "Evidence is a single run (3.2777, n=1) recorded before the significance rule existed; (3.28 − 3.2777)·√1 < 0.004, so it would not pass the current test. Loss uses reduction='sum' and gradients are SUM-all-reduced; Muon (Frobenius-normalized NS) and Adam (eps=1e-10) are insensitive to that scale.",
+  "new_technique_ids": []
+}

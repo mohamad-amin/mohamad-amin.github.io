@@ -1,0 +1,184 @@
+{
+  "id": 21,
+  "parent": 12,
+  "short_name": "Shampoo (Adam graft)",
+  "edge": {
+    "title": "Muon → Distributed Shampoo (−1/4 roots, Adam grafting), 4150 steps",
+    "summary": "The hidden matrices switch from Muon to the imported DistributedShampoo: a bias-corrected gradient EMA (β1=0.9, no Nesterov) is preconditioned as L^-1/4·M·R^-1/4, where L and R are β2=0.95 EMAs of GGᵀ and GᵀG whose inverse roots are recomputed by eigendecomposition every 5 steps. Each matrix's Shampoo direction is rescaled to the norm of an Adam step (grafting) and decoupled wd=0.2 is applied at lr=0.0015; aux AdamW, schedule and init are as in #12. Reaching 3.28 takes 4100 steps (of 4150 scheduled) vs 3325 for Muon.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Hidden optimizer Muon → Shampoo",
+        "detail": "optimizer2 = DistributedShampoo(block 2-D params, lr=0.0015, betas=(0.9, 0.95), max_preconditioner_dim=8192, precondition_frequency=5) with the default RootInvShampooPreconditionerConfig: unblocked fp32 factors (3072 < 8192), library-default exponent 1/(2·order) = −1/4 per side, eigh with ε=1e-12 added first.",
+        "symbols": ["DistributedShampoo", "optimizer2"]
+      },
+      {
+        "type": "added",
+        "label": "Adam grafting",
+        "detail": "grafting_config=AdamPreconditionerConfig(beta2=0.95, epsilon=1e-10): each matrix's Shampoo direction is rescaled to the Frobenius norm of the Adam direction m̂/(√v̂+1e-10). start_preconditioning_step=-1 resolves to 5, so steps 1–4 use the pure Adam direction.",
+        "symbols": ["AdamPreconditionerConfig"]
+      },
+      {
+        "type": "tuned",
+        "label": "Decoupled wd 0.2 at lr 0.0015",
+        "detail": "weight_decay=0.2 with WeightDecayType.DECOUPLED: 0.2·W is added to the search direction before it is multiplied by lr, i.e. 3e-4 shrink per step at peak.",
+        "symbols": ["WeightDecayType.DECOUPLED"]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3350/3325 → 4150/4100",
+        "detail": "train_steps=4150; result read at 4100 (50-step early stop, lr ≈ 1.7% of peak).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Muon code removed; library import",
+        "detail": "Muon/Newton–Schulz code deleted; imports distributed_shampoo and builds DDPDistributedConfig(communication_dtype=float32, num_trainers_per_group=world_size, communicate_params=True), or SingleDeviceDistributedConfig on 1 GPU.",
+        "symbols": ["shampoo_distributed_config"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "DistributedShampoo (distributed_shampoo library)"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.035",
+        "to": "0.0015"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "hidden wd",
+        "from": "0.025",
+        "to": "0.2 (WeightDecayType.DECOUPLED)"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "momentum / beta1",
+        "from": "0.95",
+        "to": "0.9 (betas[0])"
+      },
+      {
+        "key": "hidden.nesterov",
+        "label": "Nesterov",
+        "from": "True",
+        "to": "False (beta3 = beta1)"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "factor EMA beta2",
+        "from": "—",
+        "to": "0.95 (betas[1], factor EMA)"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "Shampoo epsilon",
+        "from": "—",
+        "to": "1e-12 (library default epsilon)"
+      },
+      {
+        "key": "shampoo.precond_freq",
+        "label": "root refresh period",
+        "from": "—",
+        "to": "5"
+      },
+      {
+        "key": "shampoo.exponent",
+        "label": "inverse root",
+        "from": "—",
+        "to": "-1/4 per side (library default 1/(2·order); no inverse_exponent_override)"
+      },
+      {
+        "key": "shampoo.grafting",
+        "label": "grafting",
+        "from": "—",
+        "to": "AdamPreconditionerConfig(beta2=0.95, epsilon=1e-10)"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3350",
+        "to": "4150"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3325",
+        "to": "4100"
+      }
+    ],
+    "techniques_added": ["shampoo"],
+    "techniques_removed": ["muon"],
+    "techniques_modified": [],
+    "parent_check": "Inferred; consistent. The skeleton (multi-trial loop, tail validation, explicit init, aux AdamW, 0.7 cooldown) is identical to #12; only the hidden optimizer and step counts change.",
+    "noise": "Deletion of the Muon/Newton–Schulz code and the distributed-config helper."
+  },
+  "techniques": [
+    {
+      "id": "shampoo",
+      "note": "lr 0.0015, betas (0.9,0.95), -1/4 roots every 5 steps, Adam graft, decoupled wd 0.2"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 4150 steps"
+    },
+    {
+      "id": "early_stop",
+      "note": "claimed at 4100 of 4150 scheduled (lr ≈ 1.7% of peak)"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases zero"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "4150",
+    "steps.claimed": "4100",
+    "hidden.optimizer": "DistributedShampoo (distributed_shampoo library)",
+    "hidden.lr": "0.0015",
+    "hidden.wd": "0.2 (WeightDecayType.DECOUPLED)",
+    "hidden.momentum": "0.9 (betas[0])",
+    "hidden.nesterov": "False (beta3 = beta1)",
+    "hidden.beta2": "0.95 (betas[1], factor EMA)",
+    "hidden.eps": "1e-12 (library default epsilon)",
+    "shampoo.precond_freq": "5",
+    "shampoo.start_precond_step": "-1 (→ 5)",
+    "shampoo.exponent": "-1/4 per side (library default 1/(2·order); no inverse_exponent_override)",
+    "shampoo.root_method": "eigh (DefaultEigenConfig), epsilon perturbation before decomposition",
+    "shampoo.max_precond_dim": "8192",
+    "shampoo.grafting": "AdamPreconditionerConfig(beta2=0.95, epsilon=1e-10)",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "shampoo",
+      "name": "Shampoo (Distributed Shampoo, Adam-grafted)",
+      "explain": "Each hidden matrix keeps Kronecker factors L ← β2·L + (1−β2)·GGᵀ and R ← β2·R + (1−β2)·GᵀG of the raw gradient; every precondition_frequency steps their inverse 4th roots are recomputed by eigendecomposition. The step direction is L^-1/4·m̂·R^-1/4 for the bias-corrected gradient EMA m̂, rescaled per matrix to the norm of an Adam step (grafting), plus decoupled weight decay. With zero betas and per-step roots the direction reduces to the polar factor UVᵀ, the spectral-descent direction of #22 (grafting still sets its norm).",
+      "symbols": ["DistributedShampoo", "AdamPreconditionerConfig"]
+    }
+  ],
+  "caveats": "The script imports the third-party distributed_shampoo package instead of inlining it (rule 4 asks for inlined optimizer code); a copy (~28k lines incl. tests) is vendored next to the log in results/20260513_shampoo_1_4_power/, so exact behavior depends on that library version. n=4, mean 3.2776 at 4100.",
+  "new_technique_ids": []
+}

@@ -1,0 +1,128 @@
+{
+  "id": 31,
+  "parent": 23,
+  "short_name": "Muown+NorMuon+Contra",
+  "edge": {
+    "title": "Add NorMuon-lite (β2 0.8) and ramped Contra-Muon to Muown; retune",
+    "summary": "On top of #23's Muown, the orthogonalized direction update passes through two ported stages before the 0.2·√max(m,n) scale: Contra-Muon subtracts c_t·M/‖M‖_op (M = pre-polar Nesterov momentum of grad_v; c_t = 0.325 decaying linearly to 0 at step 1925) and restores the Frobenius norm, damping the gradient's dominant singular directions early in training; then NorMuon-lite (β2 = 0.80) evens out per-row update RMS (per column for mlp.proj) with a Frobenius restore. Because Muown pins all rows of v to one scheduled norm, this roughly equalizes per-row angular steps. Schedules are retuned — Muown lr 0.00325→0.0045, momentum 0.95→0.946, LR horizon 3165→3045, v-norm ramp over 3005 steps with power 0.9, attn.proj/mlp.fc v-norm targets ×1.5 — and train_steps drops 3090→3000, claimed at 2995.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Contra-Muon with linear ramp-off",
+        "detail": "contra_coeff_schedule(self._global_step) = (0.65/2)·(1 − min(1, t/1925)); while nonzero, update = O − c_t·scale_to_unit_operator_norm(update_pre_ns) (5 power iterations), rescaled back to ‖O‖_F.",
+        "symbols": ["contra_coeff_schedule", "scale_to_unit_operator_norm", "_linear_ramp", "CONTRA_MUON"]
+      },
+      {
+        "type": "added",
+        "label": "NorMuon-lite on the direction update",
+        "detail": "_normuon_renorm (longer-axis mean-square EMA, rsqrt clamp 1e-10, Frobenius restore) with nor_muon_beta2=0.80 and an fp32 second_moment buffer, applied after contra and before the 0.2·√max(m,n) scale.",
+        "symbols": ["_normuon_renorm", "second_moment", "NOR_MUON_BETA2"]
+      },
+      {
+        "type": "tuned",
+        "label": "Muown lr and momentum",
+        "detail": "LR_MUOWN 0.00325 → 0.0045 (also the gain-Adam lr); MUOWN_MOMENTUM 0.95 → 0.946.",
+        "symbols": ["LR_MUOWN", "MUOWN_MOMENTUM"]
+      },
+      {
+        "type": "tuned",
+        "label": "V-norm schedule retuned",
+        "detail": "V_NORM_SCHEDULE_STEPS 3165 → 3005 and power 1.2 → 0.9 (faster early growth); family multipliers attn.proj 1 → 1.5, mlp.fc 1.0 → 1.5 (mlp.proj 3.333 kept).",
+        "symbols": ["V_NORM_SCHEDULE_STEPS", "V_NORM_SCHEDULE_POWER", "V_NORM_FAMILY_MULT"]
+      },
+      {
+        "type": "tuned",
+        "label": "LR horizon 3165 → 3045",
+        "detail": "Same lr_eta power-0.9 cooldown; the LR is ≈3.5% of peak at the claimed step.",
+        "symbols": ["LR_SCHEDULE_STEPS", "lr_eta"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3090 → 3000, claim 2995",
+        "detail": "Validation every 5 steps during the last 25 steps; 2995 is the first such checkpoint passing the significance test.",
+        "symbols": ["train_steps", "val_step_freq"]
+      },
+      {
+        "type": "refactor",
+        "label": "Docstrings, seeding, dead constants",
+        "detail": "Credits docstring, direction_scale arg removed with 0.2 hard-coded (same value), unused BETA2 constant, num_trials 30 → 1 with SEED = 2 (the 20 logs use SEED 0–19).",
+        "symbols": ["MuownDP.__init__", "SEED"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.lr", "label": "Muown lr", "from": "0.00325", "to": "0.0045"},
+      {"key": "hidden.momentum", "label": "Muown momentum", "from": "0.95", "to": "0.946"},
+      {"key": "hidden.beta2", "label": "NorMuon-lite beta2", "from": "—", "to": "0.80"},
+      {"key": "contra_muon.coeff", "label": "CONTRA_MUON", "from": "—", "to": "0.65 (subtracts 0.325·M/‖M‖_op at t=0)"},
+      {"key": "contra_muon.end_step", "label": "contra ramp-off end", "from": "—", "to": "1925"},
+      {"key": "schedule.end_step", "label": "LR schedule horizon", "from": "3165", "to": "3045"},
+      {"key": "muown.v_norm_schedule_steps", "label": "v-norm ramp length", "from": "3165", "to": "3005"},
+      {"key": "muown.v_norm_schedule_power", "label": "v-norm ramp power", "from": "1.2", "to": "0.9"},
+      {"key": "muown.v_norm_target", "label": "v-norm targets", "from": "2.496 (mlp.proj ×3.333)", "to": "2.496 (attn.proj, mlp.fc ×1.5; mlp.proj ×3.333)"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3090", "to": "3000"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3075", "to": "2995"}
+    ],
+    "techniques_added": ["normuon_lite", "contra_muon"],
+    "techniques_removed": [],
+    "techniques_modified": ["muown", "powercool"],
+    "parent_check": "consistent — nearest-code is #23 and the diff is confined to the Muown step plus constants. The NorMuon port is #9's NorMuon-lite code (PR #274, carried by #11) rather than #10, though the two normalizers are identical; the docstring also credits the power-law cooldown, which #23 already had (only its horizon changes).",
+    "noise": "Credits docstring, removed docstrings/comments, direction_scale parameter dropped (0.2 hard-coded), unused BETA2 constant, single-trial SEED harness, 5-step final validation cadence."
+  },
+  "techniques": [
+    {"id": "muown", "note": "W=g·v/‖v‖ rows; v: Nesterov(0.946)→Polar Express(12)×lr·0.2√max(m,n); g: Adam; no WD"},
+    {"id": "contra_muon", "note": "O − c_t·M/‖M‖_op, Frobenius restored; c_t 0.325 → 0 linearly by step 1925"},
+    {"id": "normuon_lite", "note": "on Muown direction update: β2 0.80 longer-axis mean-square EMA, rsqrt, Frobenius restore"},
+    {"id": "powercool", "note": "((1−t/3045)/0.7)^0.9 after 30%; LR ≈3.5% of peak at the claimed step"},
+    {"id": "early_stop", "note": "train_steps 3000, claimed at the step-2995 eval"},
+    {"id": "aux_adam", "note": "AdamW embed 0.6 / head 0.009375 / 1-D 0.03, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "zero_proj_init", "note": "proj weights zeroed, but Muown gives zero rows gain 0.33**0.5 → row norm ≈0.574 after step 1"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3000",
+    "steps.claimed": "2995",
+    "hidden.optimizer": "MuownDP (Muown + Contra-Muon + NorMuon-lite)",
+    "hidden.lr": "0.0045",
+    "hidden.wd": "0 (none)",
+    "hidden.momentum": "0.946 (m = 0.946m + g; Nesterov g + 0.946m)",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12 (Polar Express coefficients)",
+    "hidden.beta2": "0.80 (NorMuon-lite)",
+    "hidden.eps": "1e-10",
+    "contra_muon.coeff": "0.65 (subtracts CONTRA_MUON/2 = 0.325 at step 0)",
+    "contra_muon.end_step": "1925 (linear ramp from step 0)",
+    "muown.direction_scale": "0.2 (× √max(m,n))",
+    "muown.gain_betas": "(0.9, 0.95)",
+    "muown.v_norm_target": "2.496 (attn.proj, mlp.fc ×1.5; mlp.proj ×3.33333333333)",
+    "muown.v_norm_schedule_steps": "3005",
+    "muown.v_norm_schedule_power": "0.9",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.6",
+    "aux.head_lr": "0.009375",
+    "aux.scalar_lr": "0.03",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then power-law decay",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.power": "0.9",
+    "schedule.end_step": "3045",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.proj": "zero (Muown gain for zero rows: 0.33**0.5)"
+  },
+  "mechanisms": [
+    {
+      "id": "contra_muon",
+      "name": "Contra-Muon (ramped, on the Muown direction)",
+      "explain": "After Polar Express maps the Nesterov momentum M of grad_v to O, contra_coeff_schedule gives c_t = 0.325·(1 − min(1, t/1925)); while c_t > 0 the update becomes O − c_t·M/‖M‖_op (‖M‖_op from 5 power iterations started at the all-ones vector), rescaled back to ‖O‖_F. With O ≈ UVᵀ and M = UΣVᵀ each unit singular value becomes 1 − c_t·σᵢ/σ_max, so the gradient's dominant directions get relatively smaller steps early on, and the step returns to plain Muown by step 1925.",
+      "symbols": ["contra_coeff_schedule", "scale_to_unit_operator_norm", "MuownDP.step"]
+    },
+    {
+      "id": "normuon_lite",
+      "name": "NorMuon-lite inside Muown",
+      "explain": "_normuon_renorm applies #9's rule to the contra-adjusted polar update of v: an fp32 EMA (β2 = 0.80, i.e. lerp weight 0.2) of mean squared entries along the longer axis, multiplication by rsqrt(EMA) (clamp 1e-10) and restoration of the Frobenius norm. Since every row of v carries the same scheduled norm, equalizing per-row update RMS roughly equalizes per-row angular step sizes (per column for the wide mlp.proj), with a much shorter memory than #9's β2 = 0.95.",
+      "symbols": ["_normuon_renorm", "second_moment"]
+    }
+  ],
+  "caveats": "The README only lists per-seed losses; all constants here come from the code (20 logs, one trial each, SEED 0–19). The docstring's 'lr(t) = min(lr0, c·(t_end − t)^p)' is the same function as the inherited lr_eta (p = 0.9, knee at 30% of 3045). The lineage lists #10 as an influence, but the code (and README) port #9's PR #274 NorMuon-lite (mathematically identical to #10's normalizer, here with β2 0.80).",
+  "new_technique_ids": []
+}

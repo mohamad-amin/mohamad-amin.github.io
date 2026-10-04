@@ -1,0 +1,111 @@
+{
+  "id": 26,
+  "parent": 10,
+  "short_name": "SinkSOAP",
+  "edge": {
+    "title": "SinkSOAP: Sinkhorn-balanced momentum in EMA-Gram eigenbasis, no NS",
+    "summary": "NorMuon is replaced by SinkSOAP, which drops Newton–Schulz: EMA Gram matrices GGᵀ and GᵀG of the raw gradient (β=0.95) are eigendecomposed every step, the Nesterov momentum is rotated into those bases (A = UᵀMV), and 10 Sinkhorn iterations rescale A's rows and columns so its squared entries have uniform row and column sums before rotating back. Like SOAP it preconditions in the Shampoo eigenbasis, but with matrix balancing instead of Adam, and when the bases equal the momentum's singular vectors (square case) it returns Muon's polar factor. The result is rescaled to Muon's Frobenius norm and, for the non-square MLP matrices only, passed through the NorMuon postconditioner (β2=0.95, norm-preserving); lr 0.035→0.04 with wd 0.025 and linear cooldown kept, train_steps 3300→3125, claimed 3090.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Gram-eigenbasis Sinkhorn update",
+        "detail": "gram_sinkhorn_normuon_update: left_gram/right_gram lerp toward GGᵀ/GᵀG with 0.05; U, V = eigh(gram + 1e-8·I) sorted descending, every step; A = UᵀMV; sinkhorn_energy_balance_rect_no_scale (10 iters) gives A_bal = √r·A·√c; update = U·A_bal·Vᵀ.",
+        "symbols": ["gram_sinkhorn_normuon_update", "gram_eigenbasis", "sinkhorn_energy_balance_rect_no_scale", "SinkSOAP"]
+      },
+      {
+        "type": "removed",
+        "label": "Newton–Schulz orthogonalization",
+        "detail": "The SinkSOAP path never calls zeropower; scale_update_like_muon instead sets ‖update‖_F = √min(m,n)·√max(1,m/n) (= √m), Muon's norm.",
+        "symbols": ["scale_update_like_muon"]
+      },
+      {
+        "type": "modified",
+        "label": "NorMuon → postconditioner (non-square)",
+        "detail": "normuon_postcondition_update applies the same longer-axis EMA rule (β 0.95, eps 1e-10 on √v, Frobenius preserved) after the Muon-norm rescale, but only when m ≠ n, i.e. to mlp.fc and mlp.proj; q/k/v/attn.proj get none.",
+        "symbols": ["normuon_postcondition_update"]
+      },
+      {
+        "type": "tuned",
+        "label": "Hidden lr 0.035 → 0.04",
+        "detail": "SinkSOAP(..., lr=0.04, weight_decay=0.025); decoupled WD, aux AdamW and the 0.7 linear cooldown are unchanged.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3300 → 3125, claim 3090",
+        "detail": "Validation every 25 steps after 94% plus extra evals at 3080/3085/3090; 3090 is 35 steps before the LR reaches 0.",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "NorMuon class removed, Muon kept",
+        "detail": "normuon_update/NorMuon are deleted, the stock Muon class stays unused, and SinkSOAP.step supports a closure and single-process runs.",
+        "symbols": ["Muon", "SinkSOAP.step"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.optimizer", "label": "hidden optimizer", "from": "NorMuon", "to": "SinkSOAP"},
+      {"key": "hidden.lr", "label": "hidden lr", "from": "0.035", "to": "0.04"},
+      {"key": "hidden.ns_iters", "label": "Newton–Schulz iters", "from": "12", "to": "none"},
+      {"key": "sinksoap.gram_beta", "label": "Gram EMA beta", "from": "—", "to": "0.95"},
+      {"key": "sinksoap.sinkhorn_steps", "label": "Sinkhorn iterations", "from": "—", "to": "10"},
+      {"key": "sinksoap.precond_freq", "label": "eigh refresh", "from": "—", "to": "1 (every step)"},
+      {"key": "normuon.scope", "label": "NorMuon scope", "from": "all hidden matrices", "to": "non-square only (mlp.fc, mlp.proj)"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3300", "to": "3125"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3250", "to": "3090"}
+    ],
+    "techniques_added": ["sinksoap"],
+    "techniques_removed": ["muon"],
+    "techniques_modified": ["normuon"],
+    "parent_check": "Inferred #10 is plausible (same authors; reuses the NorMuon normalizer; same lr/wd style), but the text is closest to #12 because #26 deleted #10's NorMuon class and kept the stock Muon class, leaving only #6/#12 baseline text in common. Neither parent constrains the hyperparameters strongly.",
+    "noise": "Unused Muon/muon_update kept; NorMuon class deleted; closure/single-process support; padding formula tweak; extra validation steps."
+  },
+  "techniques": [
+    {"id": "sinksoap", "note": "EMA(0.95) GGᵀ/GᵀG eigenbases every step; Sinkhorn(10) balance of UᵀMV; Muon Frobenius norm"},
+    {"id": "normuon", "note": "postconditioner after SinkSOAP, β2 0.95, norm-preserving; only non-square mlp.fc / mlp.proj"},
+    {"id": "aux_adam", "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat for 30%, then linear to 0 at step 3125 (cooldown_frac 0.7)"},
+    {"id": "early_stop", "note": "train_steps 3125, claimed at the extra step-3090 eval"},
+    {"id": "zero_proj_init", "note": "proj weights (attn/mlp/lm head) zero; others N(0, 0.33/fan_in); all biases 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3125",
+    "steps.claimed": "3090",
+    "hidden.optimizer": "SinkSOAP (Gram-eigenbasis Sinkhorn + NorMuon postconditioner)",
+    "hidden.lr": "0.04",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "none",
+    "hidden.beta2": "0.95 (NorMuon postconditioner)",
+    "sinksoap.gram_beta": "0.95",
+    "sinksoap.sinkhorn_steps": "10",
+    "sinksoap.eps": "1e-8",
+    "sinksoap.precond_freq": "1 (eigh every step)",
+    "sinksoap.update_norm": "√min(m,n)·√max(1,m/n)",
+    "normuon.eps": "1e-10",
+    "normuon.scope": "m != n only (mlp.fc, mlp.proj)",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.proj": "zero",
+    "init.bias": "zero"
+  },
+  "mechanisms": [
+    {
+      "id": "sinksoap",
+      "name": "SinkSOAP (Gram–Sinkhorn SOAP-style preconditioning)",
+      "explain": "Per hidden matrix SinkSOAP keeps fp32 EMAs (β=0.95) of GGᵀ (m×m) and GᵀG (n×n) of the raw gradient and runs a full eigh on both every step; the Nesterov momentum M (μ=0.95) is rotated to A = UᵀMV, and 10 Sinkhorn iterations on B = A² + 1e-8 find r, c with diag(r)·B·diag(c) having row sums 1/m and column sums 1/n. The balanced A_bal = √r·A·√c is rotated back (U·A_bal·Vᵀ), rescaled to Muon's Frobenius norm √m and, for m ≠ n, NorMuon-postconditioned before the decoupled-WD step. If U, V were M's singular bases (square case) A would be diagonal and the result would be exactly Muon's UVᵀ, so this generalizes orthogonalization to SOAP's slowly varying Gram eigenbasis with diagonal row/column balancing in place of Adam.",
+      "symbols": ["gram_sinkhorn_normuon_update", "gram_eigenbasis", "sinkhorn_energy_balance_rect_no_scale", "scale_update_like_muon"]
+    }
+  ],
+  "caveats": "No README for this record. The NorMuon postconditioner is skipped for the square q/k/v/attn.proj matrices because of the m != n condition (apply_normuon=True notwithstanding). Gram statistics use the raw gradient while the rotated quantity is the Nesterov momentum, and full eigh of up to 3072×3072 matrices runs every step (slow but within the rules).",
+  "new_technique_ids": []
+}

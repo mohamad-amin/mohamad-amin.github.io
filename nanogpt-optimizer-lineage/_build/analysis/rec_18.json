@@ -1,0 +1,94 @@
+{
+  "id": 18,
+  "parent": 12,
+  "short_name": "PMuon",
+  "edge": {
+    "title": "PMuon: NS(L^-γ·u·R^-γ) with streaming covariance powers (γ=0.3)",
+    "summary": "PMuon inserts a two-sided preconditioner between momentum and Newton–Schulz: the step becomes NS(A^-0.3·u·C^-0.3)·max(1,m/n)^0.5, where C and A are β=0.95 running sums of uᵀu (n×n) and uuᵀ (m×m). The inverse matrix powers come from one warm-started QR subspace iteration per step (eigenbasis kept in optimizer state, Rayleigh-quotient eigenvalues), so directions with a large accumulated second moment on either side are damped before orthogonalization — Muon's polar step taken in a covariance-whitened geometry. lr 0.035, wd 0.025 and mu 0.95 are inherited from #12 without retuning; train_steps drops 3350→3250, claimed at 3225.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Two-sided covariance accumulators",
+        "detail": "pmuon_update: after the Nesterov blend (which overwrites grad in place), cov_buf ← 0.95·cov_buf + uᵀu and out_buf ← 0.95·out_buf + uuᵀ; it returns C = uᵀu + 0.95·cov_buf + 1e-6·I and A built the same way on the left.",
+        "symbols": ["pmuon_update", "cov", "out"]
+      },
+      {
+        "type": "added",
+        "label": "Streaming inverse power via QR",
+        "detail": "_streaming_cov_power: Q (random orthogonal at first use, then persisted as cov_Q/out_Q) ← qr(C·Q) once per step; λ = diag(QᵀCQ) clamped 1e-6; returns Q·diag(λ^-γ)·Qᵀ rescaled to Frobenius norm √n.",
+        "symbols": ["_streaming_cov_power"]
+      },
+      {
+        "type": "modified",
+        "label": "Preconditioned polar step",
+        "detail": "Muon.step now computes update = NS(A_neg @ u @ C_neg) · max(1,m/n)^0.5, then the usual p *= 1−lr·wd and p −= lr·update; gamma=0.3 and beta=0.95 are constructor defaults.",
+        "symbols": ["Muon.step", "zeropower_via_newtonschulz5"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3350 → 3250, claim 3225",
+        "detail": "Linear cooldown (frac 0.7) now ends at 3250; 3225 is a 25-step late validation point.",
+        "symbols": ["train_steps"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.optimizer", "label": "hidden optimizer", "from": "Muon", "to": "PMuon (Muon class with pmuon_update)"},
+      {"key": "pmuon.gamma", "label": "matrix power γ", "from": "—", "to": "0.3"},
+      {"key": "pmuon.beta", "label": "covariance decay β", "from": "—", "to": "0.95"},
+      {"key": "pmuon.eps", "label": "diag / eigenvalue floor", "from": "—", "to": "1e-6"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3350", "to": "3250"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3325", "to": "3225"}
+    ],
+    "techniques_added": ["pmuon"],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "consistent — nearest-code is #12 and every other hyperparameter (lr 0.035, wd 0.025, mu 0.95, aux AdamW, cooldown 0.7) is unchanged, as the README states.",
+    "noise": "None of note beyond replacing muon_update by pmuon_update; the gamma argument passed to pmuon_update is unused there."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95 → (precondition) → 12 NS iters → max(1,m/n)^0.5; lr 0.035, wd 0.025"},
+    {"id": "pmuon", "note": "NS(A^-0.3·u·C^-0.3); C,A = β 0.95 sums of uᵀu, uuᵀ; 1 QR power iter/step, every step"},
+    {"id": "aux_adam", "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat for 30%, then linear to 0 at step 3250 (cooldown_frac 0.7)"},
+    {"id": "early_stop", "note": "train_steps 3250, claimed at the step-3225 eval"},
+    {"id": "zero_proj_init", "note": "proj weights (attn/mlp/lm head) zero; others N(0, 0.33/fan_in); all biases 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3250",
+    "steps.claimed": "3225",
+    "hidden.optimizer": "PMuon (Muon with two-sided covariance-power preconditioning)",
+    "hidden.lr": "0.035",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "pmuon.gamma": "0.3",
+    "pmuon.beta": "0.95",
+    "pmuon.eps": "1e-6",
+    "pmuon.precond_freq": "1 (every step)",
+    "pmuon.power_iters": "1 QR subspace iteration per step, warm-started",
+    "pmuon.factor_dims": "right n×n and left m×m (up to 3072×3072 for MLP matrices)",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.proj": "zero",
+    "init.bias": "zero"
+  },
+  "mechanisms": [
+    {
+      "id": "pmuon",
+      "name": "PMuon (bilateral streaming covariance-power preconditioning)",
+      "explain": "Per hidden matrix the optimizer keeps un-normalized running sums R ← 0.95R + uᵀu (n×n) and L ← 0.95L + uuᵀ (m×m) of the Nesterov momentum u, forms C = uᵀu + 0.95R + 1e-6·I (and A likewise), and tracks each one's eigenbasis with a single QR step Q ← qr(C·Q) per optimizer step, warm-started from the previous Q. With Rayleigh quotients λ = diag(QᵀCQ) it builds Q·diag(λ^-0.3)·Qᵀ (rescaled to Frobenius norm √n) and steps along NS(A^-0.3·u·C^-0.3)·max(1,m/n)^0.5 with decoupled WD. With no history (only the current uᵀu, uuᵀ) the pre-NS matrix would be UΣ^(1−4γ)Vᵀ and NS would return Muon's UVᵀ, so the change comes entirely from the accumulated covariance tilting the polar step.",
+      "symbols": ["pmuon_update", "_streaming_cov_power", "Muon.step"]
+    }
+  ],
+  "caveats": "The README defines the covariances on the raw gradient (R_t = βR_{t−1} + GᵀG), but in code grad.lerp_ overwrites p.grad with the Nesterov blend first, so the statistics are of u; C/A also count the current term twice ((1+β)·uᵀu + β²·R_{t−1}) and are unnormalized sums (scale is irrelevant after the √n normalization and NS). The eigenbasis is only approximately tracked (one QR iteration per step from a random start), and the m×m / n×n factors include 3072×3072 matrices for both MLP weights, refreshed every step (slow but allowed).",
+  "new_technique_ids": []
+}

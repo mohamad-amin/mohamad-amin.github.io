@@ -1,0 +1,118 @@
+{
+  "id": 28,
+  "parent": 1,
+  "short_name": "DynMuon",
+  "edge": {
+    "title": "DynMuon: sigmoid-scheduled spectral power p applied around NS polar",
+    "summary": "DynMuon replaces Muon's update with fast_spectral: the NS polar factor of the Frobenius-normalized momentum X is left-multiplied by a 2nd-order Taylor polynomial of (XXᵀ)^(p/2) and scaled by ‖u‖_F^p, a surrogate for UΣ^pVᵀ that equals plain Muon at p=0. p follows a decreasing sigmoid from ≈+0.12 at step 0 through 0 at step 128 to ≈−0.25 after ~600 steps, so for most of training the update mildly up-weights weak singular directions and grows as the momentum norm shrinks. The gradient is divided by the 524288 batch tokens and momentum becomes heavy-ball (m ← 0.95m + g, Nesterov 0.95m + g); vs #1, WD 0.01→0.025 with lr 0.02 kept, #6-style init, train_steps 3600→3200 (claimed 3175).",
+    "changes": [
+      {
+        "type": "added",
+        "label": "fast_spectral power correction",
+        "detail": "X = u/‖u‖_F (wide orientation), Y = NS(X) in fp32; E = XXᵀ − I, C = I + δE + ½δ(δ−1)E² with δ = p/2; update = C·Y·‖u‖_F^p, then × max(1,m/n)^0.5 (returns Y alone when |p| < 1e-12).",
+        "symbols": ["fast_spectral", "zeropower_via_newtonschulz5"]
+      },
+      {
+        "type": "added",
+        "label": "Sigmoid schedule for p",
+        "detail": "get_dynmuon_p: p_t = −0.25 + 0.5/(1 + exp((t/3200 − 0.04)/0.04)); set_hparams writes it into group['spectral_p'] every step (spectral_lam forced to 0 and unused).",
+        "symbols": ["get_dynmuon_p", "set_hparams", "DynMuon"]
+      },
+      {
+        "type": "modified",
+        "label": "Mean-grad heavy-ball momentum",
+        "detail": "dynmuon_update divides grad by 8·64·1024, uses momentum.mul_(0.95).add_(g) and Nesterov u = 0.95·m + g; direction-equivalent to the lerp form but 20× larger, which matters through ‖u‖_F^p.",
+        "symbols": ["dynmuon_update"]
+      },
+      {
+        "type": "tuned",
+        "label": "Muon WD 0.01 → 0.025",
+        "detail": "DynMuon(lr=0.02, weight_decay=0.025, p=0.0, lam=0.0); decoupled WD applied as in Muon.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "modified",
+        "label": "#6-style init",
+        "detail": "Non-proj weights N(0, 0.33/fan_in), embed N(0,1), all biases 0, gains 1 (proj weights still zero), replacing #1's PyTorch-default init.",
+        "symbols": ["named_parameters"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3600 → 3200, claim 3175",
+        "detail": "Uses #12's cadence (validate every 25 steps after 90%); 3175 is 25 steps before the LR reaches 0.",
+        "symbols": ["train_steps", "val_step_freq"]
+      },
+      {
+        "type": "refactor",
+        "label": "Re-indent + seeded trials",
+        "detail": "Whole file re-indented to 3 spaces, num_trials=25 seeded from SEED (random/numpy/torch), unused Muon/muon_update and lam kept, per-step time print removed.",
+        "symbols": ["base_seed", "Muon"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "hidden.optimizer", "label": "hidden optimizer", "from": "Muon", "to": "DynMuon"},
+      {"key": "hidden.wd", "label": "hidden WD", "from": "0.01", "to": "0.025"},
+      {"key": "hidden.momentum", "label": "momentum form", "from": "0.95 (EMA lerp)", "to": "0.95 (heavy-ball sum on grad/524288)"},
+      {"key": "dynmuon.p_max", "label": "p sigmoid upper", "from": "—", "to": "0.25"},
+      {"key": "dynmuon.p_min", "label": "p sigmoid lower", "from": "—", "to": "-0.25"},
+      {"key": "dynmuon.tau_ratio", "label": "sigmoid center", "from": "—", "to": "0.04"},
+      {"key": "dynmuon.width_ratio", "label": "sigmoid width", "from": "—", "to": "0.04"},
+      {"key": "init.hidden_std", "label": "hidden init", "from": "PyTorch default U(±1/sqrt(fan_in))", "to": "0.33**0.5 / sqrt(fan_in) (normal)"},
+      {"key": "init.bias", "label": "bias init", "from": "default (proj biases zero)", "to": "zero"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3600", "to": "3200"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3600", "to": "3175"}
+    ],
+    "techniques_added": ["dynmuon", "early_stop"],
+    "techniques_removed": [],
+    "techniques_modified": ["muon"],
+    "parent_check": "Inferred #1 (lr 0.02 matches #1), but a whitespace-insensitive comparison shows the skeleton is #6's (num_trials loop, normal init, zero biases, F.rms_norm) plus #12's 25-step late validation; the 3-space re-indentation inflates the raw diff vs #1. WD 0.025 also matches #6/#12.",
+    "noise": "3-space re-indentation of the whole file, extra imports (math, random, numpy), per-trial seeding with num_trials=25, unused Muon class/muon_update and spectral_lam, commented-out old validation line."
+  },
+  "techniques": [
+    {"id": "muon", "note": "NS polar (12 iters) of heavy-ball Nesterov momentum, max(1,m/n)^0.5; lr 0.02, wd 0.025"},
+    {"id": "dynmuon", "note": "C·NS(X)·‖u‖_F^p, C = 2nd-order Taylor of (XXᵀ)^(p/2); p sigmoid +0.12 → −0.25"},
+    {"id": "aux_adam", "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat for 30%, then linear to 0 at step 3200 (cooldown_frac 0.7)"},
+    {"id": "early_stop", "note": "train_steps 3200, claimed at the step-3175 eval"},
+    {"id": "zero_proj_init", "note": "proj weights (attn/mlp/lm head) zero; others N(0, 0.33/fan_in); all biases 0"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3200",
+    "steps.claimed": "3175",
+    "hidden.optimizer": "DynMuon",
+    "hidden.lr": "0.02",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95 (m = 0.95m + g on grad/(8·64·1024))",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "dynmuon.p_max": "0.25",
+    "dynmuon.p_min": "-0.25",
+    "dynmuon.tau_ratio": "0.04",
+    "dynmuon.width_ratio": "0.04",
+    "dynmuon.taylor_order": "2",
+    "dynmuon.grad_scale": "1/(8*64*1024)",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay",
+    "schedule.cooldown_frac": "0.7",
+    "init.hidden_std": "0.33**0.5 / sqrt(fan_in) (normal)",
+    "init.embed_std": "1.0 (normal)",
+    "init.proj": "zero",
+    "init.bias": "zero"
+  },
+  "mechanisms": [
+    {
+      "id": "dynmuon",
+      "name": "DynMuon (scheduled spectral power around the polar factor)",
+      "explain": "dynmuon_update normalizes the summed gradient by 524288 tokens, forms heavy-ball Nesterov momentum u = 0.95m + g, and fast_spectral computes Y = NS(X) for X = u/‖u‖_F, then C·Y·‖u‖_F^p with C = I + δE + ½δ(δ−1)E², E = XXᵀ − I, δ = p/2 — a second-order Taylor surrogate for UΣ^pVᵀ that is exactly Muon at p = 0. Because XXᵀ has eigenvalues σᵢ²/Σσ² ≤ 1, C's eigenvalues stay in a narrow band (≈0.915–1 at p = +0.12, 1–1.195 at p = −0.25, weak directions getting the extreme value), while ‖u‖_F^p rescales the whole step with the momentum norm. p follows a decreasing sigmoid (asymptotes 0.25/−0.25, center and width 4% of 3200 steps): ≈+0.116 at step 0, 0 at step 128, ≈−0.24 by step 640.",
+      "symbols": ["fast_spectral", "dynmuon_update", "get_dynmuon_p"]
+    }
+  ],
+  "caveats": "The table's 'p: 0.25 → −0.25' are the sigmoid's asymptotes; the realized schedule starts at p≈+0.116 and reaches ≈−0.24 by step 640. The Taylor expansion is centered at XXᵀ = I, far from where it is evaluated (eigenvalues sum to 1), so the spectral reshaping is much weaker than an exact Σ^p — e.g. at p = −0.25 a direction with σ²/Σσ² = 1/768 gets ≤1.195× instead of 2.29× — and the uniform factors (≈1.2 and ‖u‖_F^−0.25) may matter as much as the reshaping. lam/spectral_lam is never used. No README.",
+  "new_technique_ids": []
+}

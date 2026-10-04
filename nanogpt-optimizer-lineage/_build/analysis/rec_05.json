@@ -1,0 +1,206 @@
+{
+  "id": 5,
+  "parent": 1,
+  "short_name": "MuonH (hyperball)",
+  "edge": {
+    "title": "Muon update applied via hyperball step (MuonH); non-zero proj init",
+    "summary": "MuonH keeps Muon's Nesterov momentum (0.95) and 12-iteration Newton–Schulz direction but replaces W ← W·(1−lr·wd) − lr·O with the hyperball step: O is rescaled to Frobenius norm lr·‖W‖_F (so Muon's aspect-ratio factor cancels), subtracted, and W is renormalized to its previous norm. Every hidden matrix therefore stays on a sphere of its init radius and weight decay is removed; the residual projections get non-zero init (default Kaiming-uniform ×1.25 attn.proj, ×3.0 mlp.proj, ×1.5 mlp.fc) so they have a radius at all. The hidden lr (0.018) decays linearly from step 0 while aux AdamW decays over the last 40%, reaching 3.28 in 3325 steps (vs 3600).",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Muon step → hyperball step (MuonH)",
+        "detail": "MuonH.step calls the unchanged muon_update and then scale_invariant_update_(p, update, lr) instead of p.mul_(1 − lr·wd); p.add_(update, alpha=−lr). The update's own scale (incl. max(1, rows/cols)^0.5) is discarded and weight_decay 0.01 is gone.",
+        "symbols": [
+          "MuonH",
+          "scale_invariant_update_",
+          "muon_update"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Non-zero per-module init",
+        "detail": "Default nn.Linear init is kept and scaled: attn.proj.weight ×1.25, mlp.proj.weight ×3.0, mlp.fc.weight ×1.5 (q/k/v ×1). Only the LM head proj.weight and the 'proj' biases are zeroed; #1 zeroed every 'proj' parameter.",
+        "symbols": [
+          "init loop over model.named_parameters()"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Split cooldown: hidden 1.0, aux 0.4",
+        "detail": "set_hparams uses cooldown_frac 1.0 for 'h' groups (multiplier 1 − step/3325 from step 0) and 0.4 for the AdamW groups (was a shared 0.7); no warmup.",
+        "symbols": [
+          "set_hparams",
+          "schedule_type"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3600→3325, lr 0.02→0.018",
+        "detail": "train_steps = 3325 and MuonH lr = 0.018 (constructor default 0.014 is overridden); mu stays 0.95; aux AdamW unchanged.",
+        "symbols": [
+          "train_steps",
+          "MuonH"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Four per-shape MuonH instances",
+        "detail": "q/k/v, mlp.fc, attn.proj and mlp.proj go to four MuonH optimizers with identical lr/mu (stated purpose: separate torch.compile caches) — same math as a single instance; docstrings and a device-name print added.",
+        "symbols": [
+          "qkv_params",
+          "mlp_fc_params",
+          "attn_proj_params",
+          "mlp_proj_params"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3600",
+        "to": "3325"
+      },
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "MuonH"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.02",
+        "to": "0.018"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "hidden weight decay",
+        "from": "0.01",
+        "to": "0 (hyperball)"
+      },
+      {
+        "key": "schedule.hidden_cooldown_frac",
+        "label": "hidden cooldown_frac",
+        "from": "0.7",
+        "to": "1.0"
+      },
+      {
+        "key": "schedule.aux_cooldown_frac",
+        "label": "aux cooldown_frac",
+        "from": "0.7",
+        "to": "0.4"
+      },
+      {
+        "key": "init.proj",
+        "label": "proj init",
+        "from": "all 'proj' params zero",
+        "to": "LM head + proj biases zero; attn.proj ×1.25, mlp.proj ×3.0 default init"
+      },
+      {
+        "key": "per_module_init_std.mlp_fc",
+        "label": "mlp.fc init",
+        "from": "default",
+        "to": "×1.5 (std ≈ 0.031)"
+      }
+    ],
+    "techniques_added": [
+      "hyperball",
+      "per_module_init_std",
+      "split_cooldown"
+    ],
+    "techniques_removed": [
+      "zero_proj_init"
+    ],
+    "techniques_modified": [
+      "muon",
+      "linear_cooldown"
+    ],
+    "parent_check": "consistent — nearest code is #1 (96 changed lines); everything outside the optimizer, init and schedule is #1's skeleton.",
+    "noise": "The per-shape optimizer split (compile caching), docstrings and the device-name print are behavior-neutral."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "Nesterov momentum 0.95 → NS5 (12 iters, a,b,c = 2, −1.5, 0.5); only its direction is used"
+    },
+    {
+      "id": "hyperball",
+      "note": "all 72 block matrices pinned to init ‖W‖_F; pre-retraction step = lr·‖W‖_F; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default Kaiming-uniform × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; q/k/v ×1"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "hidden: linear to 0 from step 0 (frac 1.0); aux: flat, then linear over last 40%"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "aux AdamW cooldown_frac 0.4 vs hidden 1.0"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3325",
+    "steps.claimed": "3325",
+    "hidden.optimizer": "MuonH (Muon direction + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball fixes ‖W‖)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear decay; hidden from step 0, aux after 60%",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "hyperball.radius": "per-matrix ‖W‖_F at init (expected ≈16 q/k/v, 20 attn.proj, 48 mlp.fc & mlp.proj)",
+    "hyperball.eps": "1e-10",
+    "init.hidden_std": "nn.Linear default Kaiming-uniform, std 1/√(3·fan_in) ≈ 0.0208 (q/k/v)",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero",
+    "init.bias": "proj biases 0; q/k/v/fc biases default uniform ±1/√fan_in"
+  },
+  "mechanisms": [
+    {
+      "id": "hyperball",
+      "name": "Hyperball (Frobenius-sphere) step",
+      "explain": "scale_invariant_update_ rescales Muon's orthogonalized update O to Frobenius norm lr·‖W‖_F, subtracts it, and rescales the result back to the pre-step norm, so each hidden matrix stays on a sphere whose radius is its norm at initialization. The lr becomes a relative step (≈ the rotation angle along O's tangential part), O's magnitude — including Muon's max(1, rows/cols)^0.5 factor — is irrelevant, and weight decay is unnecessary because the norm cannot grow.",
+      "symbols": [
+        "scale_invariant_update_",
+        "MuonH"
+      ]
+    },
+    {
+      "id": "per_module_init_std",
+      "name": "Per-module init multipliers",
+      "explain": "Starting from PyTorch's default nn.Linear init (uniform, std 1/√(3·fan_in)), attn.proj is scaled ×1.25, mlp.proj ×3.0 and mlp.fc ×1.5 (std ≈ 0.026/0.031/0.031) while q/k/v keep std ≈ 0.0208. Because the hyperball freezes each matrix's norm, these multipliers fix the radii for the whole run (expected ‖W‖_F ≈ 16 for q/k/v, 20 for attn.proj, 48 for mlp.fc and mlp.proj).",
+      "symbols": [
+        "init loop over model.named_parameters()"
+      ]
+    },
+    {
+      "id": "split_cooldown",
+      "name": "Split cooldown",
+      "explain": "Param groups are tagged schedule_type 'h' or 'aux'. MuonH groups use cooldown_frac 1.0 (linear decay from step 0 to 0 at the end), while the AdamW embed/head/scalar groups stay flat for 60% of the run and decay over the last 40%.",
+      "symbols": [
+        "set_hparams",
+        "schedule_type"
+      ]
+    }
+  ],
+  "caveats": "Radii are expected norms implied by the init std, not code constants. The repo's copy results/20260430_muonh/train_gpt_simple_muonh.py is a maintainer port to the updated skeleton whose init differs from the logged run (Gaussian std √(0.33/fan_in), all biases zero, LM head not zeroed despite its comment); this analysis follows the logged script, and #37 is built on the port.",
+  "new_technique_ids": []
+}

@@ -1,0 +1,170 @@
+{
+  "id": 25,
+  "parent": 19,
+  "short_name": "KL-SOAP-H PowerCool",
+  "edge": {
+    "title": "Power-1.5 LR decay with floors; stop at 3040 of a 3125-step schedule",
+    "summary": "Keeps #19's KL-SOAP-H optimizer and replaces both linear decays with a floored power law: η = floor + (1−floor)·x^1.5 with x = (1 − step/3125)/cooldown_frac, using floor 0.017 for the KL-SOAP matrices (decaying from step 0) and 0.04 for aux AdamW (decaying over the last 40%). Training stops at 3040 steps while the schedule horizon stays at 3125, so the final steps still run at ≈2.1% (hidden) and ≈5.7% (aux) of peak LR instead of annealing to 0. All of these values were injected via env vars at launch; the logged code's defaults (3150 steps, power 1.0, zero floors, shampoo_beta 0.95) are not what ran.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Power-law cooldown with LR floors",
+        "detail": "_eta(progress, cooldown_frac, power, floor) = 1 before the cooldown, else floor + (1−floor)·x^power with x = max(0, (1−progress)/cooldown_frac); runs use LR_POWER = 1.5, KLSOAP_LR_FLOOR = 0.017, ADAM_LR_FLOOR = 0.04 with cooldown fracs 1.0 / 0.4 unchanged.",
+        "symbols": [
+          "_eta",
+          "set_hparams"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Schedule horizon decoupled from run",
+        "detail": "progress = step/SCHEDULE_STEPS with SCHEDULE_STEPS = 3125 while TRAIN_STEPS = 3040, so training ends 85 steps before the schedule would finish.",
+        "symbols": [
+          "SCHEDULE_STEPS",
+          "TRAIN_STEPS"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3125→3040",
+        "detail": "train_steps = TRAIN_STEPS = 3040, which is also the claimed step (final eval).",
+        "symbols": [
+          "train_steps"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Env-driven config and plumbing",
+        "detail": "All schedule/KL-SOAP hparams read from env with 'Using …' prints (KLSOAPH default shampoo_beta changed to 0.95, but runs pass 0.9); SEED env (manual_seed only) replaces KL_SOAP_SEED; cuDNN SDPA disabled; LOG_DIR, extra eval steps and optional progress prints.",
+        "symbols": [
+          "KLSOAP_SHAMPOO_BETA",
+          "SEED_ENV",
+          "enable_cudnn_sdp"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3125",
+        "to": "3040 (schedule horizon stays 3125)"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed step",
+        "from": "3125",
+        "to": "3040"
+      },
+      {
+        "key": "schedule.kind",
+        "label": "LR schedule",
+        "from": "linear decay",
+        "to": "power-law decay with floors"
+      },
+      {
+        "key": "schedule.power",
+        "label": "decay power",
+        "from": "1",
+        "to": "1.5"
+      },
+      {
+        "key": "powercool.hidden_floor",
+        "label": "KL-SOAP LR floor",
+        "from": "0",
+        "to": "0.017"
+      },
+      {
+        "key": "powercool.aux_floor",
+        "label": "AdamW LR floor",
+        "from": "0",
+        "to": "0.04"
+      }
+    ],
+    "techniques_added": [
+      "powercool",
+      "early_stop"
+    ],
+    "techniques_removed": [
+      "linear_cooldown"
+    ],
+    "techniques_modified": [
+      "split_cooldown"
+    ],
+    "parent_check": "consistent — nearest code is #19 (101 changed lines). The power-law cooldown and the train-shorter-than-schedule trick echo #20's PowerCool (which also trains 3040 steps of a 3105-step schedule and disables cuDNN SDPA), but the formula here is a normalized power with floors rather than #20's c·(t_end − t)^1.2.",
+    "noise": "Env-var parsing and 'Using …' logging, LOG_DIR, optional progress prints and extra eval steps, the seeding path, and disabling the cuDNN SDPA backend (kernel choice only)."
+  },
+  "techniques": [
+    {
+      "id": "kl_soap",
+      "note": "as #19: β1 0.95, β2 0.9, shampoo β 0.9 (via env), eps 1e-8, QR refresh every step"
+    },
+    {
+      "id": "hyperball",
+      "note": "all 72 block matrices pinned to init ‖W‖_F; step lr·‖W‖_F then renormalize; no wd"
+    },
+    {
+      "id": "per_module_init_std",
+      "note": "default init × attn.proj 1.25, mlp.proj 3.0, mlp.fc 1.5; LM head + proj biases zero"
+    },
+    {
+      "id": "powercool",
+      "note": "η = floor + (1−floor)·x^1.5; floors 0.017 (KL-SOAP) / 0.04 (AdamW); horizon 3125"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "AdamW cooldown_frac 0.4 vs KL-SOAP 1.0 (both power 1.5, different floors)"
+    },
+    {
+      "id": "early_stop",
+      "note": "trains 3040 of a 3125-step schedule; final LR ≈2.1% (hidden), ≈5.7% (aux) of peak"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3040 (TRAIN_STEPS env; code default 3150)",
+    "steps.claimed": "3040",
+    "schedule.end_step": "3125 (SCHEDULE_STEPS env)",
+    "schedule.kind": "power-law cooldown with floors",
+    "schedule.power": "1.5 (LR_POWER env; code default 1.0)",
+    "powercool.hidden_floor": "0.017 (KLSOAP_LR_FLOOR env)",
+    "powercool.aux_floor": "0.04 (ADAM_LR_FLOOR env)",
+    "schedule.hidden_cooldown_frac": "1.0",
+    "schedule.aux_cooldown_frac": "0.4",
+    "hidden.optimizer": "KLSOAPH (KL-SOAP direction + hyperball)",
+    "hidden.lr": "0.018",
+    "hidden.wd": "0 (none; hyperball)",
+    "hidden.momentum": "0.95 (beta1)",
+    "hidden.beta2": "0.9",
+    "hidden.eps": "1e-8",
+    "kl_soap.shampoo_beta": "0.9 (env; code default 0.95)",
+    "kl_soap.precond_freq": "1",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "per_module_init_std.attn_proj": "×1.25 (std ≈ 0.026)",
+    "per_module_init_std.mlp_proj": "×3.0 (std ≈ 0.031)",
+    "per_module_init_std.mlp_fc": "×1.5 (std ≈ 0.031)",
+    "init.proj": "LM head proj.weight = 0; block proj weights non-zero"
+  },
+  "mechanisms": [
+    {
+      "id": "powercool",
+      "name": "Power-law cooldown with LR floors",
+      "explain": "Each group's multiplier is 1 until progress = step/3125 reaches 1 − cooldown_frac, then floor + (1−floor)·x^1.5, where x is the remaining fraction of the cooldown. With power > 1 the LR drops faster early in the cooldown and flattens near the end; the floors (1.7% of peak for KL-SOAP, 4% for AdamW) and stopping at step 3040 of the 3125-step horizon keep the final LRs non-zero.",
+      "symbols": [
+        "_eta",
+        "set_hparams"
+      ]
+    }
+  ],
+  "caveats": "The logged script is env-driven and its defaults (TRAIN_STEPS 3150, SCHEDULE_STEPS = TRAIN_STEPS, LR_POWER 1.0, floors 0, KLSOAP_SHAMPOO_BETA 0.95) do not reproduce the record. All five logs print train_steps=3040, schedule_steps=3125, lr_power=1.5, adam_lr_floor=0.04, klsoap_lr_floor=0.017, klsoap_shampoo_beta=0.9, matching the README and the archived hard-coded script, so those values are used here. The README says the script reads KL_SOAP_SEED; that is true of the archived script, while the logged one reads SEED.",
+  "new_technique_ids": []
+}

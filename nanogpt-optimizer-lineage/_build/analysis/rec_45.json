@@ -1,0 +1,106 @@
+{
+  "id": 45,
+  "parent": 44,
+  "short_name": "Tail-EMA blend",
+  "edge": {
+    "title": "Blend weights 60% toward a τ=150 EMA at claim step 2720; stop there",
+    "summary": "Adds a Tail-EMA readout to #44's otherwise identical training: from step 2000 an EMA with time constant τ=150 steps of every non-embedding parameter is updated after each optimizer step, and at step 2720 the weights are overwritten in place with 0.4·θ + 0.6·EMA immediately before the claim-step validation. STOP_STEP is set to 2720, so the loop ends there while the LR and μ schedules still target 2900 (the claim sits mid-cooldown). Intuition (README): under a decaying LR the late iterates oscillate around the valley floor; a partial blend with a tail average cancels that noise while limiting the EMA's lag bias, with τ ≈ (2900−2720)/1.2.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Tail-EMA of weights from step 2000",
+        "detail": "maybe_update_tail_ema snapshots non-embedding params after update 2000, then lerps the buffer toward θ with weight 1/150 after every optimizer step (keyed step+1).",
+        "symbols": ["maybe_update_tail_ema", "TAIL_EMA_TAUS", "TAIL_EMA_START_STEP", "TAIL_EMA_SCOPE"]
+      },
+      {
+        "type": "added",
+        "label": "One-shot 0.6 blend at step 2720",
+        "detail": "At the top of loop step 2720, before validation, every non-embedding param is overwritten via p.lerp_(ema, 0.6), i.e. θ ← 0.4·θ + 0.6·EMA; that validation is the claim.",
+        "symbols": ["TAIL_EMA_APPLY_STEP", "TAIL_EMA_APPLY_TAU", "TAIL_EMA_APPLY_LAMBDA"]
+      },
+      {
+        "type": "modified",
+        "label": "Training stops at 2720",
+        "detail": "STOP_STEP default 2900→2720: the loop breaks after the step-2720 validation; FINAL_TRAIN_STEPS, PowerCool t_end (2900) and the μ cooldown (2700–2900) are unchanged.",
+        "symbols": ["STOP_STEP", "FINAL_TRAIN_STEPS"]
+      },
+      {
+        "type": "refactor",
+        "label": "Default-off research hooks",
+        "detail": "Adds env-gated Muon-history forecasting (MUON_HISTORY_STEPS=0 ⇒ apply_muon_history is identity), anchor-readout sweep/apply, TrailDelta pulses, a (τ×λ) Tail-EMA sweep and checkpoint save/resume — all off by default.",
+        "symbols": ["apply_muon_history", "maybe_capture_readout_anchor", "maybe_apply_trail_delta", "save_screening_checkpoint", "load_screening_checkpoint"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "tail_ema.horizon", "label": "EMA time constant τ", "from": "—", "to": "150 steps"},
+      {"key": "tail_ema.lambda", "label": "Blend weight λ", "from": "—", "to": "0.6"},
+      {"key": "tail_ema.start", "label": "EMA start step", "from": "—", "to": "2000"},
+      {"key": "tail_ema.apply_step", "label": "Blend applied at", "from": "—", "to": "2720 (in place, before validation)"},
+      {"key": "steps.stop", "label": "STOP_STEP", "from": "2900", "to": "2720"},
+      {"key": "steps.claimed", "label": "Claimed step", "from": "2750", "to": "2720"}
+    ],
+    "techniques_added": ["tail_ema"],
+    "techniques_removed": [],
+    "techniques_modified": ["early_stop"],
+    "parent_check": "consistent: c45_p44 is purely additive; with defaults the training trajectory equals #44's up to step 2720 (the EMA is read-only until the blend), so the README's 'byte-identical through step 2000' is conservative.",
+    "noise": "Default-off scaffolding (Muon-history H5a forecasting, anchor readout sweep/apply, TrailDelta, Tail-EMA sweep, single-GPU checkpoint save/resume), env overrides for FINAL_SCHEDULE_STEPS/MU_COOLDOWN_STEPS with unchanged defaults, extra log lines, _run_val_loss refactor."
+  },
+  "techniques": [
+    {"id": "muon", "note": "plain 12-iter NS (a,b,c = 2,−1.5,0.5); Nesterov-EMA μ; √max(1,m/n) scale"},
+    {"id": "soap_muon_all", "note": "q,k,v,attn.proj,mlp.fc,mlp.proj; basis refresh every step; β2 0.90; attn.proj trust-gated"},
+    {"id": "radial_brake", "note": "outward radial part of the update ×0.5; post-step rescale to first-order target radius"},
+    {"id": "uw_floor", "note": "update scaled up so ‖U‖F/‖W‖F ≥ 0.3825 on every Muon matrix; no weight decay"},
+    {"id": "ema_nesterov", "note": "lookahead 0.3·lr/lr0 along EMA(0.99) of per-step displacement, steps 300–1950"},
+    {"id": "powercool", "note": "min(lr0, c·(2900−t)^1.2): Muon decays from ~514, Adam groups from ~1487"},
+    {"id": "mu_schedule", "note": "μ 0.85→0.95 over first 300 steps; 0.95→0.85 over 2700–2900 (only 2700–2720 reached)"},
+    {"id": "early_stop", "note": "training stops at 2720 (STOP_STEP) while all schedules target 2900"},
+    {"id": "zero_proj_init", "note": "every param named *proj* zeroed: attn.proj, mlp.proj, lm head (weights and biases)"},
+    {"id": "depth_scaled_fc_init", "note": "mlp.fc weight × (1 − 0.30·layer/11)"},
+    {"id": "cgi_gain_init", "note": "gains 1 ∓ 0.125·s; layers 0–5 Rademacher, 6–11 head-mean-shrunk antithetic pairs"},
+    {"id": "tail_ema", "note": "EMA (τ=150) of non-embedding params from step 2000; θ ← 0.4θ + 0.6·EMA in place at 2720"},
+    {"id": "aux_adam", "note": "fused AdamW (bias-corrected) for embed (lr 0.3) and lm head (1/320); β(0.8,0.99), wd 0"},
+    {"id": "aux_beta2_split", "note": "1-D: bias-free Adam lr 0.01, β1 0.8; β2 gains 0.99 / biases 0.997 / attn.proj.bias 0.9965"}
+  ],
+  "hparams": {
+    "steps.scheduled": "2900",
+    "steps.claimed": "2720",
+    "steps.stop": "2720 (STOP_STEP)",
+    "hidden.optimizer": "Muon with SOAP preconditioning on all hidden matrices",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (u/w floor + radius rescale instead)",
+    "hidden.momentum": "0.95 (0.85→0.95 over 300; 0.95→0.85 over 2700–2900)",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "hidden.beta2": "0.90 (SOAP second moment and Gram EMA)",
+    "aux.optimizer": "AdamW (embed, head) + bias-correction-free Adam (1-D)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99) embed/head; 1-D β2 0.99/0.997/0.9965",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "2900",
+    "init.proj": "zero",
+    "init.gains": "CGI α=0.125 (antithetic head-mean pairs in layers 6–11)",
+    "depth_scaled_fc_init.alpha": "0.30",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "soap_muon_all.precond_freq": "1",
+    "ema_nesterov.lookahead": "0.3·lr/lr0, steps 300–1950",
+    "ema_nesterov.gamma": "0.99",
+    "tail_ema.horizon": "150",
+    "tail_ema.lambda": "0.6",
+    "tail_ema.start": "2000",
+    "tail_ema.apply_step": "2720",
+    "tail_ema.scope": "all params except embed.weight"
+  },
+  "mechanisms": [
+    {
+      "id": "tail_ema",
+      "name": "Tail-EMA blend",
+      "explain": "After each optimizer step (keyed step+1) the script maintains an EMA of all non-embedding parameters: initialized from the weights after update 2000, then ema ← ema + (θ − ema)/150. At loop step 2720, just before validation, each such parameter is replaced by 0.4·θ + 0.6·ema (p.lerp_(ema, 0.6)); training then stops, so the blended weights are only evaluated. By 2720 the step-2000 initialization retains ≈0.8% weight in the buffer.",
+      "symbols": ["maybe_update_tail_ema", "TAIL_EMA_APPLY_STEP", "TAIL_EMA_APPLY_LAMBDA"]
+    }
+  ],
+  "caveats": "Runs were single-GPU 1×GH200 (world_size=1), n=10 seeds, versus #44's 8×H100; the README notes GH200 val losses ran ~+0.0004 above #44's H100 logs. The blend is destructive, but nothing follows it because the loop stops at 2720. Logs confirm 'tail_ema initialized step:2000' and 'tail_ema applied step:2720', with defaults and no env overrides (run.sh).",
+  "new_technique_ids": []
+}

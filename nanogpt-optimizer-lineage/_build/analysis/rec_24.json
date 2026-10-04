@@ -1,0 +1,84 @@
+{
+  "id": 24,
+  "parent": 11,
+  "short_name": "Split LR cooldown",
+  "edge": {
+    "title": "Split linear cooldown: aux AdamW frac 0.4, hidden Muon frac 0.8",
+    "summary": "Only the LR schedule changes relative to #11: set_hparams now reads a per-group cooldown_frac, 0.4 for the three AdamW groups (embed, lm head, 1-D params) and 0.8 for the Muon hidden matrices, instead of 0.7 for everything. Over the 3175-step run the aux LRs stay at peak until step 1905, while the hidden-matrix LR starts decaying at step 635 (vs step 968 for all groups in #11), giving the Contra/NorMuon matrices a longer anneal and embeddings/head/gains a later, shorter one. train_steps drops from 3225 to 3175, which is also the claimed step.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Per-group cooldown_frac",
+        "detail": "optimizer1's groups get cooldown_frac = 0.4 and optimizer2's group 0.8; set_hparams(step) applies the stable-then-linear-decay rule per group instead of one shared cooldown_frac = 0.7.",
+        "symbols": ["set_hparams", "cooldown_frac"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3225 → 3175",
+        "detail": "Both schedules reach 0 at 3175, the claimed step (no early stop).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Validation checkpoints",
+        "detail": "extra_val_steps reduced to {3150}.",
+        "symbols": ["extra_val_steps"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "schedule.aux_cooldown_frac", "label": "AdamW cooldown_frac", "from": "0.7", "to": "0.4"},
+      {"key": "schedule.hidden_cooldown_frac", "label": "Muon cooldown_frac", "from": "0.7", "to": "0.8"},
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3225", "to": "3175"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3225", "to": "3175"}
+    ],
+    "techniques_added": ["split_cooldown"],
+    "techniques_removed": [],
+    "techniques_modified": ["linear_cooldown"],
+    "parent_check": "consistent — nearest-code is #11 and the diff touches only train_steps, extra_val_steps and the LR schedule.",
+    "noise": "extra_val_steps {3150}; the header docstring still describes #11."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95, 12 NS iters, √max(1, m/n) scale, lr 0.0375"},
+    {"id": "contra_muon", "note": "u = NS(M) − 0.2·M/σ̂max(M) (CONTRA_MUON=0.4), rescaled to ‖NS(M)‖_F"},
+    {"id": "normuon_lite", "note": "variance EMA (β2 0.95) along the longer dim, rsqrt-scaled, Frobenius norm restored"},
+    {"id": "uw_floor", "note": "update scaled up to ‖u‖_F/‖w‖_F = 0.35 when below; wd 0.025 passed but never applied"},
+    {"id": "aux_adam", "note": "AdamW lr embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "per-group flat-then-linear decay reaching 0 at step 3175"},
+    {"id": "split_cooldown", "note": "aux AdamW cooldown_frac 0.4 (flat to step 1905); Muon 0.8 (flat to step 635)"},
+    {"id": "zero_proj_init", "note": "every param with 'proj' in its name zeroed (attn/mlp proj and lm head, weights and biases)"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3175",
+    "steps.claimed": "3175",
+    "hidden.optimizer": "Muon + Contra-Muon + NorMuon-lite + u/w floor",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 effective (MUON_WEIGHT_DECAY=0.025 passed, never applied)",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95 (NorMuon-lite variance EMA)",
+    "contra_muon.coeff": "0.4 (CONTRA_MUON; subtracts 0.2 × normalized momentum)",
+    "uw_floor.target": "0.35",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear_cooldown (per group)",
+    "schedule.aux_cooldown_frac": "0.4",
+    "schedule.hidden_cooldown_frac": "0.8",
+    "init.proj": "zero (all params with 'proj' in name, incl. lm head and biases)"
+  },
+  "mechanisms": [
+    {
+      "id": "split_cooldown",
+      "name": "Split LR cooldown",
+      "explain": "Each param group stores its own cooldown_frac, and set_hparams applies eta = 1 before step (1 − frac)·T and eta = (1 − step/T)/frac afterwards, per group. With T = 3175, the AdamW groups (0.4) stay at peak LR until step 1905, while the Muon group (0.8) starts decaying at step 635, so the hidden matrices anneal over most of the run and the embeddings, head and gains keep a high LR longer.",
+      "symbols": ["set_hparams", "cooldown_frac"]
+    }
+  ],
+  "caveats": "Effective Muon wd remains 0 (0.025 unused). Aux and hidden cooldown fractions were split earlier in the hyperball lineage (#4/#5/#8: h_cooldown_frac 1.0, aux 0.4), but this is the first split on the Contra-Muon stack. #20's PowerCool constants later encode a similar split (Muon decays from ≈ step 719 of 3105, AdamW from ≈ 1692), although #24 is not an ancestor of #20.",
+  "new_technique_ids": []
+}

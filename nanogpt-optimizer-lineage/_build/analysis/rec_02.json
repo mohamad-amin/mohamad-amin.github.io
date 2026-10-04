@@ -1,0 +1,160 @@
+{
+  "id": 2,
+  "parent": 1,
+  "short_name": "AdamW everywhere",
+  "edge": {
+    "title": "Replace Muon with AdamW (lr 0.0015, wd 0.1) + 250-step warmup",
+    "summary": "The hidden block matrices switch from Muon to elementwise AdamW (lr=0.0015, betas=(0.9, 0.95), eps=1e-10, decoupled wd=0.10): no orthogonalization or aspect-ratio scaling, only per-coordinate normalization. A 250-step linear LR warmup is added to every param group (including the aux AdamW groups) and the run is lengthened to 5625 steps, about 1.56x #1. The README flags this Adam baseline as most likely undertuned.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Hidden optimizer Muon → AdamW",
+        "detail": "optimizer2 = AdamW(block 2-D params, lr=block_adamw_lr=0.0015, betas=(0.9, 0.95), eps=1e-10, weight_decay=0.10, fused=True); decoupled decay p *= 1 − lr·wd is 1.5e-4/step at peak (2e-4 for #1's Muon). The Muon class stays defined but is unused.",
+        "symbols": ["optimizer2", "block_adamw_lr", "block_adamw_weight_decay", "block_adamw_betas"]
+      },
+      {
+        "type": "added",
+        "label": "250-step linear warmup, all groups",
+        "detail": "Every param group of both optimizers gets group['warmup_steps']=250 and set_hparams uses lr = initial_lr · min(1, (step+1)/250) · eta, so the aux embed/head/1-D groups also warm up despite the comment saying aux groups are left unchanged.",
+        "symbols": ["set_hparams", "block_adamw_warmup_steps"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3600 → 5625",
+        "detail": "Claimed step equals the scheduled end (single run, 3.279 at 5625).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Earlier-draft cosmetic differences",
+        "detail": "Linear class placed above RMSNorm, x.relu() → F.relu(x), unused Muon renamed (mu→momentum/beta, state key momentum_buffer, range(...)[::world_size]), print0 opens the log file first, param broadcast moved into the init loop. All behavior-neutral.",
+        "symbols": ["Linear", "muon_update", "print0"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "AdamW (fused)"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.02",
+        "to": "0.0015"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "hidden wd",
+        "from": "0.01",
+        "to": "0.10"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "hidden momentum / beta1",
+        "from": "0.95",
+        "to": "0.9 (Adam beta1)"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "hidden beta2",
+        "from": "—",
+        "to": "0.95"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "hidden eps",
+        "from": "—",
+        "to": "1e-10"
+      },
+      {
+        "key": "schedule.warmup_steps",
+        "label": "LR warmup steps",
+        "from": "0",
+        "to": "250"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3600",
+        "to": "5625"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3600",
+        "to": "5625"
+      }
+    ],
+    "techniques_added": ["adam_hidden", "lr_warmup"],
+    "techniques_removed": ["muon"],
+    "techniques_modified": [],
+    "parent_check": "Consistent. Git history shows #2 forked from a same-day draft of train_gpt_simple.py (bf94c68, train_steps=3550) that is behaviorally identical to #1 apart from train_steps, which explains the cosmetic diff lines.",
+    "noise": "Linear/RMSNorm reordering, F.relu, renames inside the now-unused Muon class, print0 restructure, moved dist.broadcast, whitespace."
+  },
+  "techniques": [
+    {
+      "id": "adam_hidden",
+      "note": "AdamW lr 0.0015, betas (0.9,0.95), eps 1e-10, wd 0.10 on all 72 block 2-D weights"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 5625 steps"
+    },
+    {
+      "id": "lr_warmup",
+      "note": "linear warmup over 250 steps, applied to every group incl. aux AdamW"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "as #1: all 'proj' params (incl. LM head) zeroed"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "5625",
+    "steps.claimed": "5625",
+    "hidden.optimizer": "AdamW (fused)",
+    "hidden.lr": "0.0015",
+    "hidden.wd": "0.10",
+    "hidden.momentum": "0.9 (Adam beta1)",
+    "hidden.nesterov": "n/a",
+    "hidden.beta2": "0.95",
+    "hidden.eps": "1e-10",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "linear warmup, stable, then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "250",
+    "init.hidden_std": "torch default nn.Linear U(±1/sqrt(fan_in)), std ≈ 0.0208 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "torch default U(±1/sqrt(fan_in)) for q/k/v/fc; proj biases zero",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "adam_hidden",
+      "name": "AdamW on hidden matrices",
+      "explain": "Each hidden weight takes the bias-corrected Adam step m̂/(√v̂ + 1e-10) with betas (0.9, 0.95), a per-coordinate normalization instead of Muon's per-matrix orthogonalization, plus decoupled decay p *= 1 − lr·0.1. There is no spectral or aspect-ratio scaling, so the update geometry is elementwise (sign-like) rather than spectral.",
+      "symbols": ["optimizer2"]
+    },
+    {
+      "id": "lr_warmup",
+      "name": "Linear LR warmup",
+      "explain": "set_hparams multiplies each group's lr by min(1, (step+1)/warmup_steps) with warmup_steps=250, on top of the stable/decay factor. All groups (hidden AdamW and aux AdamW) ramp from 1/250 of their peak lr to full lr over the first 250 steps.",
+      "symbols": ["set_hparams", "block_adamw_warmup_steps"]
+    }
+  ],
+  "caveats": "Single run (3.279, n=1) recorded before the significance rule; the README itself says it is most likely undertuned. The warmup also hits the aux AdamW groups, contrary to the in-code comment. The old Muon class remains as dead code.",
+  "new_technique_ids": []
+}

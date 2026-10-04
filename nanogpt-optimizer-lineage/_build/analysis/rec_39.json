@@ -1,0 +1,152 @@
+{
+  "id": 39,
+  "parent": 12,
+  "short_name": "EMA-Nesterov on #12",
+  "edge": {
+    "title": "Wrap AdamW+Muon in EMA-Nesterov lookahead (γ=0.99, β=0.6·lr ratio)",
+    "summary": "#12's optimizers (aux AdamW + Muon, hparams unchanged) are wrapped by EMA_Nesterov over all parameters. The wrapper keeps buf, an EMA (γ=0.99) of each step's total parameter displacement; before each forward/backward it shifts the weights by β·buf with β = 0.6·lr/initial_lr during steps 500–2399, computes gradients there, and lets the inner optimizers step from the shifted point, so the shift is never undone. This acts like an extra long-horizon momentum on the combined update, amplifying its persistent component by up to 1/(1−β) = 2.5x at peak LR, and saves 200 steps (3325 → 3125 claimed, 3150 scheduled).",
+    "changes": [
+      {
+        "type": "added",
+        "label": "EMA-Nesterov wrapper",
+        "detail": "optimizers = [EMA_Nesterov(all params, [optimizer1, optimizer2], ...)]. Its step() runs the inner AdamW and Muon steps, then accum_lookahead: buf.lerp_(p − prev_params, 1 − 0.99) and prev_params ← p, so buf is an EMA of the full per-step displacement (including the previous shift).",
+        "symbols": ["EMA_Nesterov", "accum_lookahead", "step"]
+      },
+      {
+        "type": "added",
+        "label": "Lookahead shift before fwd/bwd",
+        "detail": "optimizers[0].nesterov_step() runs before the micro-batch loop; when prefill_steps < it+1 and it < rest_steps, lookahead_step adds lookahead_stepsize·lr_ratio·buf to every param, so gradients and the inner step are taken at the shifted point.",
+        "symbols": ["nesterov_step", "lookahead_step"]
+      },
+      {
+        "type": "added",
+        "label": "β schedule and active window",
+        "detail": "lookahead_stepsize=0.6 times get_lr_lambda() = lr/initial_lr of the first aux group (the shared WSD factor, read before set_hparams, one step stale); prefill_steps=500 and rest_steps=train_steps−750=2400, so shifts happen at steps 500–2399 while buf accumulates from step 0.",
+        "symbols": ["get_lr_lambda", "prefill_steps", "rest_steps"]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3350/3325 → 3150/3125",
+        "detail": "train_steps=3150 with the result read at 3125 (the 25-step early stop is kept).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Wrapper plumbing",
+        "detail": "set_hparams iterates optimizers[0].inner_optimizer, the param-coverage assert moves after wrapping, blank-line edits.",
+        "symbols": ["set_hparams"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3350",
+        "to": "3150"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3325",
+        "to": "3125"
+      },
+      {
+        "key": "ema_nesterov.gamma",
+        "label": "lookahead EMA γ",
+        "from": "—",
+        "to": "0.99 (lookahead_ema)"
+      },
+      {
+        "key": "ema_nesterov.beta",
+        "label": "lookahead step β",
+        "from": "—",
+        "to": "0.6 (lookahead_stepsize) × lr/initial_lr (use_scheduled_lookahead_stepsize=True)"
+      },
+      {
+        "key": "ema_nesterov.prefill_steps",
+        "label": "lookahead starts after",
+        "from": "—",
+        "to": "500"
+      },
+      {
+        "key": "ema_nesterov.rest_steps",
+        "label": "lookahead stops at",
+        "from": "—",
+        "to": "train_steps - 750 (= 2400)"
+      }
+    ],
+    "techniques_added": ["ema_nesterov"],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "Consistent (declared 'Setup from #12'): Muon lr 0.035 / wd 0.025, aux AdamW settings, init and 0.7 cooldown are unchanged from #12.",
+    "noise": "Blank lines, missing trailing newline, and the set_hparams/assert plumbing needed for the wrapper."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "as #12: lr 0.035, wd 0.025, mu 0.95 Nesterov, NS 12 iters"
+    },
+    {
+      "id": "aux_adam",
+      "note": "as #12: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3150 steps"
+    },
+    {
+      "id": "early_stop",
+      "note": "claimed at 3125 of 3150 scheduled (lr ≈ 1.1% of peak)"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases zero"
+    },
+    {
+      "id": "ema_nesterov",
+      "note": "γ 0.99, β 0.6·lr/max_lr, shifts at steps 500–2399, wraps AdamW+Muon (all params)"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3150",
+    "steps.claimed": "3125",
+    "hidden.optimizer": "Muon",
+    "hidden.lr": "0.035",
+    "hidden.wd": "0.025",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1",
+    "ema_nesterov.gamma": "0.99 (lookahead_ema)",
+    "ema_nesterov.beta": "0.6 (lookahead_stepsize) × lr/initial_lr (use_scheduled_lookahead_stepsize=True)",
+    "ema_nesterov.prefill_steps": "500",
+    "ema_nesterov.rest_steps": "train_steps - 750 (= 2400)",
+    "ema_nesterov.scope": "all model params; inner = [AdamW aux, Muon]"
+  },
+  "mechanisms": [
+    {
+      "id": "ema_nesterov",
+      "name": "EMA-Nesterov lookahead wrapper",
+      "explain": "The wrapper tracks buf = EMA_0.99 of each parameter's displacement x_{t+1} − x_t (inner optimizer step plus the previous shift); inside the active window it moves the weights to y = x + β_t·buf with β_t = 0.6·lr_t/lr_max before computing gradients, Nesterov-style. The inner optimizers update from y and the result becomes the next x, so shifts accumulate. buf then behaves like a heavy-ball momentum with effective decay γ + (1−γ)β ≈ 0.996 that extrapolates the smooth trajectory and amplifies its persistent component by up to 1/(1−β).",
+      "symbols": ["EMA_Nesterov", "nesterov_step", "lookahead_step", "accum_lookahead"]
+    }
+  ],
+  "caveats": "The 1/(1−β) amplification is a steady-state estimate for a constant inner update, not measured. Shifts stop for the last 750 scheduled steps (it < 2400) and β also follows the LR cooldown. Validation runs before nesterov_step, i.e. on x_t without the next shift. Run on 8×A100; n=20, mean 3.2786 at 3125.",
+  "new_technique_ids": []
+}

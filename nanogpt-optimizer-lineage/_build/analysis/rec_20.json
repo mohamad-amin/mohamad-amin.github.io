@@ -1,0 +1,144 @@
+{
+  "id": 20,
+  "parent": 16,
+  "short_name": "PowerCool + Soft-Muon",
+  "edge": {
+    "title": "PowerCool LR, Contra→Muon→Soft-Muon ramp, attention SOAP moved to V",
+    "summary": "Three groups of changes on #16's stack. (1) The linear cooldown is replaced by PowerCool, lr = min(lr0, c·(3105 − step)^1.2) with hand-set per-group c, so Muon starts decaying at ≈ step 719 and the AdamW groups at ≈ step 1692; the run stops at 3040 (claimed 3030), before the LR reaches 0. (2) The polar step becomes time-dependent: Contra-Muon's −0.2·ĝ term ramps linearly to 0 by step 2000 (plain Muon), then from step 2500 the update is blended toward Soft-Muon (a fixed combination of NS iterates approximating σ^0.1, which keeps the singular-value ordering), reaching 80% at step 2908; all norm computations switch to the Schatten-4 estimate √‖XᵀX‖_F. (3) Attention SOAP moves from trust-gated attn.proj to ungated attn.v (blend 0.95, denominator floor 0.55), and the u/w-floor target rises from 0.35 to 0.3825.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "PowerCool LR schedule",
+        "detail": "set_hparams uses _lr = min(initial_lr, power_c·max(0, 3105 − step)^1.2) per group (power_c: embed 4.98e-5, head 5.18e-7, 1-D 1.66e-6, Muon 3.32e-6); training stops at FINAL_TRAIN_STEPS = 3040 < FINAL_SCHEDULE_STEPS = 3105.",
+        "symbols": ["_lr", "set_hparams", "FINAL_SCHEDULE_STEPS", "FINAL_LR_POWER", "MUON_POWER_C"]
+      },
+      {
+        "type": "added",
+        "label": "Late Soft-Muon blend (p=0.1, cap 0.8)",
+        "detail": "soft_via_newtonschulz5 combines 12 NS iterates with fixed p = 0.1 coefficients; muon_update blends contra_update toward soft_update with weight min(0.8, (step − 2500)/510), renormalized to the NS output's Schatten-4 norm.",
+        "symbols": ["soft_via_newtonschulz5", "_soft_coefficients", "soft_blend_for_step", "SOFT_MUON_CEIL"]
+      },
+      {
+        "type": "modified",
+        "label": "Contra-Muon ramped off by step 2000",
+        "detail": "contra_coeff_for_step scales CONTRA_MUON_COEFF = −0.2 by (1 − step/2000): Contra-Muon at step 0, plain NS from 2000; ĝ is now normalized by the Schatten-4 estimate instead of power iteration.",
+        "symbols": ["contra_coeff_for_step", "scale_to_unit_operator_norm", "CONTRA_MUON_COEFF"]
+      },
+      {
+        "type": "modified",
+        "label": "Attention SOAP: attn.proj → attn.v",
+        "detail": "SOAP_PARAM_MODE = 'mlp_plus_v': attn.v gets SOAP with V_SOAP_BLEND = 0.95 and denominator floor 0.55, gate fixed at 1; attn.proj is no longer preconditioned, so the trust gate never runs.",
+        "symbols": ["should_soap_param", "SOAP_PARAM_MODE", "V_SOAP_BLEND", "ATTN_SOAP_DENOM_FLOOR"]
+      },
+      {
+        "type": "modified",
+        "label": "Schatten-4 norm replaces Frobenius",
+        "detail": "gram_frobenius_norm_estimate (√‖XᵀX‖_F) replaces the Frobenius pre-normalization inside NS and every Frobenius norm-matching step (Contra, NorMuon-lite, SOAP output, blends).",
+        "symbols": ["gram_frobenius_norm_estimate", "zeropower_via_newtonschulz5"]
+      },
+      {
+        "type": "tuned",
+        "label": "u/w floor 0.35 → 0.3825",
+        "detail": "TARGET_UW = 0.3825 for both SOAP and non-SOAP matrices (SOAP_TARGET_UW = NONSOAP_TARGET_UW).",
+        "symbols": ["TARGET_UW", "SOAP_TARGET_UW", "NONSOAP_TARGET_UW"]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 3175 → 3040, claim 3030",
+        "detail": "FINAL_TRAIN_STEPS = 3040 with schedule endpoint 3105; claimed at the 3030 checkpoint (Muon LR ≈1.6%, AdamW ≈3% of peak).",
+        "symbols": ["FINAL_TRAIN_STEPS", "extra_val_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Hooks, CLI seed, logging",
+        "detail": "argparse --seed, hard-coded LOG_DIR, EARLY_STOP screening and tail validation removed, disabled hooks (NO_CONTRA_PARAM / NO_SOFTMUON_PARAM empty, ATTN_SOAP_FADE_* at 1e9, V_SOAP_BLEND_RAMP_END_STEP = 0).",
+        "symbols": ["NO_CONTRA_PARAM", "NO_SOFTMUON_PARAM", "ATTN_SOAP_FADE_START_STEP", "V_SOAP_BLEND_RAMP_END_STEP"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "steps.scheduled", "label": "train_steps", "from": "3175", "to": "3040"},
+      {"key": "steps.claimed", "label": "claimed step", "from": "3125", "to": "3030"},
+      {"key": "schedule.kind", "label": "LR schedule", "from": "linear_cooldown (frac 0.7)", "to": "powercool (power 1.2)"},
+      {"key": "schedule.end_step", "label": "schedule endpoint", "from": "3175", "to": "3105"},
+      {"key": "uw_floor.target", "label": "TARGET_UW", "from": "0.35", "to": "0.3825"},
+      {"key": "contra_muon.coeff", "label": "Contra-Muon coefficient", "from": "−0.2·ĝ (constant)", "to": "−0.2·ĝ → 0 linearly over steps 0–2000"},
+      {"key": "soft_muon.ceil", "label": "Soft-Muon blend cap", "from": "—", "to": "0.80 (ramp 2500→3010)"},
+      {"key": "soap_muon_attn.scope", "label": "attention SOAP params", "from": "attn.proj.weight", "to": "attn.v.weight"},
+      {"key": "soap_muon_attn.denom_floor", "label": "ATTN_SOAP_DENOM_FLOOR", "from": "0.20", "to": "0.55"},
+      {"key": "soap_muon_attn.gate", "label": "attention SOAP gate", "from": "trust gate, [0.45, 0.85] early", "to": "none (fixed blend 0.95)"}
+    ],
+    "techniques_added": ["powercool", "soft_muon", "split_cooldown"],
+    "techniques_removed": ["linear_cooldown"],
+    "techniques_modified": ["contra_muon", "soap_muon_attn", "uw_floor", "muon"],
+    "parent_check": "Code base is #16 (nearest-code #16), but #16's defining attn.proj trust-gated SOAP is inactive: SOAP_PARAM_MODE = 'mlp_plus_v' moves attention SOAP to attn.v without a gate (trust_gate/bounded_trust_gate remain as dead code). PowerCool is credited to PR287 (Yash Pande), which is not an accepted record in this table.",
+    "noise": "Docstring/credits, argparse seed, LOG_DIR, removal of EARLY_STOP/TARGET_VAL_LOSS screening and 2-step tail validation, new unused SOAP_PARAM_MODE options (mlp_plus_q/k/v), disabled hooks (NO_CONTRA_PARAM, NO_SOFTMUON_PARAM, ATTN_SOAP_FADE_*, V_SOAP_BLEND_RAMP_END_STEP), unused SOFT_MUON_SCALE branches, config prints."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95, 12 NS iters with Schatten-4 (√‖XXᵀ‖_F) input normalization, lr 0.0375"},
+    {"id": "contra_muon", "note": "+coeff·M/‖M‖_S4 with coeff −0.2 at step 0 → 0 linearly by step 2000; norm restored"},
+    {"id": "soft_muon", "note": "p=0.1 map from weighted NS iterates; blend 0 → 0.8 over steps 2500–2908, held at 0.8"},
+    {"id": "normuon_lite", "note": "variance EMA (β2 0.95) along the longer dim; norm restoration now Schatten-4 based"},
+    {"id": "uw_floor", "note": "target 0.3825 for all hidden matrices; wd 0.025 passed but never applied"},
+    {"id": "soap_muon_mlp", "note": "mlp.fc/mlp.proj, β 0.90, basis refresh every 10, blend 1.0 (unchanged)"},
+    {"id": "soap_muon_attn", "note": "attn.v only: 0.95·SOAP + 0.05·raw momentum, denom floor 0.55×RMS, no trust gate"},
+    {"id": "powercool", "note": "lr = min(lr0, c·(3105 − step)^1.2) per group; stop at 3040 with LR ≈1.35% (Muon) of peak"},
+    {"id": "split_cooldown", "note": "implicit via per-group c: Muon decays from ≈ step 719, AdamW groups from ≈ step 1692"},
+    {"id": "aux_adam", "note": "AdamW lr embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "zero_proj_init", "note": "every param with 'proj' in its name zeroed (attn/mlp proj and lm head, weights and biases)"},
+    {"id": "early_stop", "note": "claimed at 3030 of 3040 run steps (schedule endpoint 3105; Muon LR ≈1.6% of peak)"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3040 (FINAL_TRAIN_STEPS)",
+    "steps.claimed": "3030",
+    "hidden.optimizer": "Muon (Contra→NS→Soft blend) + SOAP (MLP, attn.v) + NorMuon-lite + u/w floor",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 effective (FINAL_MUON_WD=0.025 passed, never applied)",
+    "hidden.momentum": "0.95",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95 (NOR_BETA2, NorMuon-lite)",
+    "contra_muon.coeff": "-0.2 (CONTRA_MUON_COEFF) × (1 − step/2000), 0 after step 2000",
+    "soft_muon.p": "0.1",
+    "soft_muon.ceil": "0.80",
+    "soft_muon.ramp": "linear from step 2500 to 3010 (cap reached at 2908)",
+    "uw_floor.target": "0.3825",
+    "soap_muon_mlp.beta2": "0.90 (SOAP_BETA2; also covariance EMA beta)",
+    "soap_muon_mlp.precond_freq": "10",
+    "soap_muon_attn.scope": "attn.v.weight (SOAP_PARAM_MODE='mlp_plus_v')",
+    "soap_muon_attn.blend": "0.95 (V_SOAP_BLEND)",
+    "soap_muon_attn.denom_floor": "0.55",
+    "schedule.kind": "powercool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "3105 (FINAL_SCHEDULE_STEPS)",
+    "powercool.muon_c": "3.3169534699576625e-06",
+    "powercool.embed_c": "4.976805410800738e-05",
+    "powercool.head_c": "5.184172302917436e-07",
+    "powercool.scalar_c": "1.6589351369335795e-06",
+    "schedule.hidden_cooldown_frac": "≈0.77 of 3105, derived (Muon flat until step ≈719)",
+    "schedule.aux_cooldown_frac": "≈0.455 of 3105, derived (AdamW flat until step ≈1692)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01"
+  },
+  "mechanisms": [
+    {
+      "id": "soft_muon",
+      "name": "Soft-Muon",
+      "explain": "soft_via_newtonschulz5 normalizes the input by its Schatten-4 norm, runs the same 12 NS iterations as Muon, and returns a fixed linear combination of the iterates X0…X11 (coefficients for p = 0.1, summing to 1). The resulting singular-value map approximates σ^0.1 (e.g. 0.1 → 0.79, 0.5 → 0.93), so stronger directions still get larger steps instead of being flattened to 1. In muon_update it is rescaled to the NS output's norm and mixed in with weight min(0.8, (step − 2500)/510), after Contra-Muon has ramped to zero by step 2000; the mix then goes through NorMuon-lite and the u/w floor.",
+      "symbols": ["soft_via_newtonschulz5", "_soft_coefficients", "soft_blend_for_step", "muon_update"]
+    },
+    {
+      "id": "powercool",
+      "name": "PowerCool LR schedule",
+      "explain": "Each group's LR is min(initial_lr, c·(t_end − step)^1.2) with t_end = FINAL_SCHEDULE_STEPS = 3105 and hard-coded per-group c: flat until the power-law curve drops below the peak, then a slightly convex power-law decay toward t_end. Training stops at 3040, before t_end, so the LR never reaches 0 (≈1.35% of peak for Muon and ≈2.5% for AdamW at the last step).",
+      "symbols": ["_lr", "set_hparams", "FINAL_SCHEDULE_STEPS", "FINAL_LR_POWER"]
+    },
+    {
+      "id": "split_cooldown",
+      "name": "Split cooldown via PowerCool constants",
+      "explain": "The per-group constants put the onset of decay at ≈ step 719 for Muon (a ≈2386-step, ≈77% cooldown) but ≈ step 1692 for all three AdamW groups (≈1413 steps, ≈45%). Hidden matrices therefore anneal much longer than the embeddings, head and gains, the same idea as #24's 0.8/0.4 split, here encoded in power_c rather than cooldown_frac.",
+      "symbols": ["ADAM_EMBED_POWER_C", "ADAM_PROJ_POWER_C", "ADAM_OTHER_POWER_C", "MUON_POWER_C"]
+    }
+  ],
+  "caveats": "V_SOAP_BLEND = 0.95 mixes the whitened direction with the raw momentum before norm matching, so the effective 95/5 split depends on their unnormalized magnitudes. The switch to Schatten-4 norms (which also makes Contra's ĝ have spectral norm ≤ 1 rather than ≈ 1) is not mentioned in the README or table. The benchmark README attributes the 0.3825 u/w target to the #29/#30 lineage, but it is already set here. Soft-Muon is computed every step even while its blend weight is 0. Effective Muon wd 0 (FINAL_MUON_WD = 0.025 unused).",
+  "new_technique_ids": []
+}

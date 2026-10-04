@@ -1,0 +1,339 @@
+{
+  "id": 38,
+  "parent": 30,
+  "short_name": "Tail ref-interp 2900",
+  "edge": {
+    "title": "Exact-2900 run: late Tempered-Polar/brake/u-w retune + eval readouts",
+    "summary": "Retargets the #30 stack to an exact 2900-step run (train_steps 2900, PowerCool end 3020) and retunes the late phase: Contra-Muon fade stretched to 2750, a Tempered-Polar term (ρ ramped 0→0.05 over 2600–2800) that tilts the polar update slightly back toward the normalized raw momentum, outward radial brake tightened 0.5→0.4 over 2400–2900, and u/w floor raised 0.3825→0.400 over 2400–2800. At evaluation only, the hidden matrices are shifted by −6× an EMA(0.9) of recent per-step weight changes (from step 2500), and at step 2900 all weights are interpolated 7.5% back toward a step-2375 snapshot (θ_eval = 0.925·θ + 0.075·θ_2375); weights are restored after each eval, so training is unaffected.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Fixed reference interpolation at 2900",
+        "detail": "maybe_capture_ref_extrap_state copies all floating-point params to CPU after update 2375; at validations with step ≥ 2900 apply_ref_extrap_weights adds −0.075·(θ − θ_2375), evaluates, then restores.",
+        "symbols": [
+          "maybe_capture_ref_extrap_state",
+          "apply_ref_extrap_weights",
+          "ref_extrap_gamma_for_step",
+          "REF_EXTRAP_GAMMA"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Tail-velocity readout γ=−6",
+        "detail": "From step 2500 update_tail_velocity keeps v ← 0.9v + 0.1(θ_t − θ_{t−1}) per Muon matrix; every validation ≥ 2500 temporarily adds −6·v (‖v‖ clipped to 1% of ‖θ‖) before evaluating.",
+        "symbols": [
+          "update_tail_velocity",
+          "apply_tail_velocity_weights",
+          "restore_tail_extrapolated_weights",
+          "TAIL_VEL_GAMMA"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Late Tempered-Polar (ρ→0.05)",
+        "detail": "After NS/Aurora, apply_tempered_polar adds ρ·clip(G/‖G‖₄ − polar, ≤0.25‖polar‖₄) and renormalizes to the polar norm; ρ ramps 0→0.05 over 2600–2800, all hidden matrices, applied before the Contra term.",
+        "symbols": [
+          "apply_tempered_polar",
+          "tempered_polar_rho_for_step",
+          "TEMPERED_POLAR_RHO",
+          "TEMPERED_POLAR_MAX_DELTA"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Contra-Muon fade extended to 2750",
+        "detail": "CONTRA_TO_NORMAL_END_STEP 2500→2750 (run env), so −0.2·(1−t/2750) still acts during the late phase.",
+        "symbols": [
+          "CONTRA_TO_NORMAL_END_STEP",
+          "contra_coeff_for_step"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Late radial brake 0.5→0.4",
+        "detail": "radial_outward_scale_for_step interpolates the outward radial scale from 0.5 at step 2400 to 0.4 at 2900; inward stays 1.0.",
+        "symbols": [
+          "radial_outward_scale_for_step",
+          "scale_radial_update",
+          "RADIAL_OUTWARD_SCALE_LATE"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "u/w floor ramp 0.3825→0.400",
+        "detail": "target_uw_for_step raises the floor linearly over steps 2400–2800 and holds 0.400 (scope all; deficit gate and decay off).",
+        "symbols": [
+          "target_uw_for_step",
+          "effective_target_uw_for_update",
+          "TARGET_UW_LATE"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "Exact-2900 horizon",
+        "detail": "TRAIN_STEPS 3020→2900 (= claimed step, no early stop) moves the μ cooldown to 2800–2900; SCHEDULE_STEPS 3050→3020 shifts PowerCool 30 steps earlier (Muon LR at 2900 is still ≈2.8% of peak).",
+        "symbols": [
+          "FINAL_TRAIN_STEPS",
+          "FINAL_SCHEDULE_STEPS",
+          "_muon_mu_at_step"
+        ]
+      },
+      {
+        "type": "refactor",
+        "label": "Env knobs, checkpointing, eval sweeps",
+        "detail": "Many env-gated options default off in the run (Aurora relax/β decay, agreement shrink, radial adapt, LR late multipliers, train-loss u/w gate, tail-EMA, weight-scale sweeps), plus checkpoint save/resume, data-loader skip and train-loss logging.",
+        "symbols": [
+          "apply_aurora_relax",
+          "apply_agreement_shrink",
+          "maybe_save_checkpoint",
+          "update_train_loss_metrics"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3020",
+        "to": "2900"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "2930",
+        "to": "2900"
+      },
+      {
+        "key": "schedule.end_step",
+        "label": "PowerCool t_end",
+        "from": "3050",
+        "to": "3020"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "μ cooldown window",
+        "from": "2920–3020",
+        "to": "2800–2900"
+      },
+      {
+        "key": "contra_muon.ramp_end_step",
+        "label": "Contra→normal end",
+        "from": "2500",
+        "to": "2750"
+      },
+      {
+        "key": "tempered_polar.rho",
+        "label": "Tempered-Polar ρ",
+        "from": "none",
+        "to": "0→0.05 over 2600–2800"
+      },
+      {
+        "key": "tempered_polar.max_delta",
+        "label": "Tempered-Polar residual cap",
+        "from": "none",
+        "to": "0.25"
+      },
+      {
+        "key": "radial_brake.outward_scale",
+        "label": "outward radial scale",
+        "from": "0.5",
+        "to": "0.5→0.4 over 2400–2900"
+      },
+      {
+        "key": "uw_floor.target",
+        "label": "u/w floor",
+        "from": "0.3825",
+        "to": "0.3825→0.400 over 2400–2800"
+      },
+      {
+        "key": "tail_refinterp.gamma",
+        "label": "tail-velocity γ",
+        "from": "none",
+        "to": "-6.0"
+      },
+      {
+        "key": "tail_refinterp.beta",
+        "label": "tail-velocity EMA β",
+        "from": "none",
+        "to": "0.90"
+      },
+      {
+        "key": "tail_refinterp.start_step",
+        "label": "tail-velocity start",
+        "from": "none",
+        "to": "2500"
+      },
+      {
+        "key": "fixed_ref_interp.capture_step",
+        "label": "reference capture step",
+        "from": "none",
+        "to": "2375"
+      },
+      {
+        "key": "fixed_ref_interp.gamma",
+        "label": "reference interp γ",
+        "from": "none",
+        "to": "-0.075"
+      },
+      {
+        "key": "fixed_ref_interp.apply_start_step",
+        "label": "reference apply from",
+        "from": "none",
+        "to": "2900"
+      }
+    ],
+    "techniques_added": [
+      "tempered_polar",
+      "tail_refinterp",
+      "fixed_ref_interp"
+    ],
+    "techniques_removed": [
+      "early_stop"
+    ],
+    "techniques_modified": [
+      "contra_muon",
+      "radial_brake",
+      "uw_floor",
+      "powercool",
+      "mu_schedule"
+    ],
+    "parent_check": "consistent (built on #30's Aurora stack; parallel to #34/#40, none of whose additions are present)",
+    "noise": "Large env-var scaffolding for options that are off in the record run, checkpoint save/load and data-loader resume (start_batch=0 reproduces the old stream), an extra per-step all_reduce of the train loss for logging, dense-eval grid reduced to {2900}."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "momentum lerp + grad.lerp(buf, μ); 12 NS iters (2, −1.5, 0.5); ×max(1,m/n)^½"
+    },
+    {
+      "id": "soap_muon_mlp",
+      "note": "SOAP preconditioning of mlp.fc & mlp.proj momentum before NS; freq 10, β2 0.90"
+    },
+    {
+      "id": "soap_muon_attn",
+      "note": "attn.v only: SOAP blend 0.95, denom floor 0.55, ungated"
+    },
+    {
+      "id": "contra_muon",
+      "note": "−0.2·G/‖G‖₄ term fading linearly to 0 at step 2750"
+    },
+    {
+      "id": "aurora",
+      "note": "mlp.proj only: K=3 leverage-rebalanced NS rounds, β=0.25"
+    },
+    {
+      "id": "tempered_polar",
+      "note": "+ρ·clipped(G/‖G‖₄ − polar), ρ 0→0.05 over 2600–2800, cap 0.25; all hidden matrices"
+    },
+    {
+      "id": "uw_floor",
+      "note": "floor 0.3825, ramped to 0.400 over 2400–2800"
+    },
+    {
+      "id": "radial_brake",
+      "note": "outward scale 0.5 → 0.4 over 2400–2900, inward 1.0; post-step radius rescale"
+    },
+    {
+      "id": "powercool",
+      "note": "lr = min(lr0, c·(3020−t)^1.2) per group, power 1.2"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "implicit via per-group c: Muon decays from ≈ step 634, AdamW groups from ≈ step 1607"
+    },
+    {
+      "id": "mu_schedule",
+      "note": "μ 0.85→0.95 over 0–300; 0.95→0.85 over 2800–2900 (completes at the claim)"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "every param with 'proj' in its name zeroed"
+    },
+    {
+      "id": "depth_scaled_fc_init",
+      "note": "mlp.fc weight × (1 − 0.30·l/11)"
+    },
+    {
+      "id": "cgi_gain_init",
+      "note": "norm1/norm2 gains 1∓0.14·s, Rademacher s"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3, head 1/320, 1-D 0.01; betas (0.8, 0.99), wd 0"
+    },
+    {
+      "id": "tail_refinterp",
+      "note": "eval-only: Muon matrices shifted by −6·EMA_0.9(Δθ) at validations ≥ 2500"
+    },
+    {
+      "id": "fixed_ref_interp",
+      "note": "eval-only at 2900: θ ← 0.925·θ + 0.075·θ_2375 for all float params"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "2900",
+    "steps.claimed": "2900",
+    "hidden.optimizer": "Muon + SOAP (MLP, V) + Contra + Aurora (mlp.proj) + late Tempered-Polar",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (0.025 passed but unused)",
+    "hidden.momentum": "0.85→0.95→0.85 (cooldown 2800–2900)",
+    "hidden.ns_iters": "12 (3×12 for mlp.proj)",
+    "aux.optimizer": "AdamW",
+    "aux.betas": "(0.8, 0.99)",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "3020",
+    "schedule.hidden_cooldown_frac": "≈0.790 of 3020, derived (Muon flat until ≈634)",
+    "schedule.aux_cooldown_frac": "≈0.468 of 3020, derived (AdamW flat until ≈1607)",
+    "contra_muon.coeff": "-0.2",
+    "contra_muon.ramp_end_step": "2750",
+    "aurora.K": "3",
+    "aurora.beta": "0.25",
+    "tempered_polar.rho": "0.05 (ramp 2600–2800)",
+    "tempered_polar.max_delta": "0.25",
+    "uw_floor.target": "0.3825→0.400 (2400–2800)",
+    "radial_brake.outward_scale": "0.5→0.4 (2400–2900)",
+    "radial_brake.inward_scale": "1.0",
+    "tail_refinterp.gamma": "-6.0",
+    "tail_refinterp.beta": "0.90",
+    "tail_refinterp.start_step": "2500",
+    "tail_refinterp.max_delta_ratio": "0.01",
+    "fixed_ref_interp.capture_step": "2375",
+    "fixed_ref_interp.gamma": "-0.075",
+    "fixed_ref_interp.apply_start_step": "2900"
+  },
+  "mechanisms": [
+    {
+      "id": "tempered_polar",
+      "name": "Tempered-Polar residual",
+      "explain": "apply_tempered_polar takes the polar update P (Aurora output for mlp.proj) and the Schatten-4-normalized pre-polar momentum N, clips the residual N − P to at most 0.25·‖P‖₄, forms P + ρ·residual and rescales to ‖P‖₄. Since ‖N − P‖₄ is comparable to ‖P‖₄ (~768^¼) the clip typically binds, so at ρ=0.05 the step is ≈(1−ε)·P + ε·N renormalized with ε ≈ 0.013–0.015: a small opposite-sign counterpart of Contra-Muon that slightly re-weights toward dominant singular directions. ρ is 0 before 2600, ramps to 0.05 at 2800 and holds; it is applied before the (by then nearly zero) Contra term.",
+      "symbols": [
+        "apply_tempered_polar",
+        "tempered_polar_rho_for_step",
+        "muon_update"
+      ]
+    },
+    {
+      "id": "tail_refinterp",
+      "name": "Tail-velocity readout",
+      "explain": "Starting with the update that ends step 2500, update_tail_velocity stores the previous weights of every Muon matrix and keeps v ← 0.9·v + 0.1·(θ_t − θ_{t−1}). At each validation step ≥ 2500 apply_tail_velocity_weights adds γ·v with γ = −6 (‖v‖ first clipped to 1% of ‖θ‖, which in practice does not bind), i.e. the evaluated weights sit about six averaged steps back along the recent update direction; the shift is removed after validation, so only reported losses change.",
+      "symbols": [
+        "update_tail_velocity",
+        "apply_tail_velocity_weights",
+        "restore_tail_extrapolated_weights"
+      ]
+    },
+    {
+      "id": "fixed_ref_interp",
+      "name": "Fixed reference interpolation",
+      "explain": "After update 2375 maybe_capture_ref_extrap_state copies every floating-point parameter (embedding, lm head, gains, biases and hidden matrices) to CPU. At validations with step ≥ REF_EXTRAP_APPLY_START_STEP = 2900, apply_ref_extrap_weights sets θ ← θ + γ(θ − θ_2375) with γ = −0.075, i.e. θ_eval = 0.925·θ + 0.075·θ_2375, applied on top of the tail-velocity shift, and both are undone after evaluation.",
+      "symbols": [
+        "maybe_capture_ref_extrap_state",
+        "apply_ref_extrap_weights",
+        "ref_extrap_gamma_for_step"
+      ]
+    }
+  ],
+  "caveats": "The script embedded in the official logs reads these settings from env vars whose in-code defaults differ from the run (defaults: SCHEDULE_STEPS 3050, Contra end 2500, Tempered-Polar ρ=0.05 from step 0 with no ramp, no radial/u-w ramps, tail-velocity and reference interpolation disabled). run.sh, the frozen train_gpt_tail_refinterp_2900.py and the 'Using …' header of all 9 seed logs confirm the values listed here. The table entry omits the step-2375 reference interpolation, which the README calls the main new mechanism; the tail-velocity shift applies to every validation ≥ 2500, not only the last. The tail-velocity clip bounds ‖v‖ before the ×6, so the effective cap is 6% of ‖θ‖. Runs used world_size=1 (GH200).",
+  "new_technique_ids": []
+}

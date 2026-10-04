@@ -1,0 +1,303 @@
+{
+  "id": 30,
+  "parent": 29,
+  "short_name": "Aurora on mlp.proj",
+  "edge": {
+    "title": "Aurora polar on mlp.proj, Soft-Muon/NorMuon-lite off, Muon mu schedule",
+    "summary": "Replaces the plain Newton–Schulz polar for wide matrices (only the 12 mlp.proj 768×3072 weights) with an Aurora leverage-balanced polar: three NS passes on a column-rescaled input, so every MLP hidden neuron's column receives a near-equal share of the update instead of a share that shrinks for neurons with weak momentum. Soft-Muon (blend cap 0.80→0) and NorMuon-lite (NOR_BETA2 0.95→1.0, row-variance buffer frozen at 0) are switched off, the Contra-Muon fade is stretched from step 2000 to 2500, and Muon momentum gets a 0.85→0.95 warmup over 300 steps plus a 0.95→0.85 cooldown over the last 100 scheduled steps. Smaller retunes: PowerCool end 3105→3050, aux Adam β2 0.95→0.99, and new inits (depth-scaled mlp.fc α=0.30, Rademacher CGI norm gains α=0.14).",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Aurora polar for wide matrices",
+        "detail": "For m<n (only mlp.proj) zeropower_via_newtonschulz5 runs K=3 rounds of 12-step NS on G·diag(D); D starts at 1/column-norm and is multiplied by (0.25/ℓ_j)^0.25 between rounds, ℓ_j = squared column norm of the polar output. Square/tall matrices keep the plain path.",
+        "symbols": [
+          "zeropower_via_newtonschulz5",
+          "_ns_inner",
+          "_AURORA_K",
+          "_AURORA_BETA",
+          "_AURORA_EPS"
+        ]
+      },
+      {
+        "type": "removed",
+        "label": "Soft-Muon blend disabled",
+        "detail": "SOFT_MUON_CEIL 0.80→0.00 makes soft_blend_for_step ≡ 0, so the update is the Contra/normal path; soft_via_newtonschulz5 is still computed but gets zero weight.",
+        "symbols": [
+          "SOFT_MUON_CEIL",
+          "soft_blend_for_step",
+          "muon_update"
+        ]
+      },
+      {
+        "type": "removed",
+        "label": "NorMuon-lite disabled",
+        "detail": "NOR_BETA2 0.95→1.0: second_moment.lerp_(…, 1−β2) never moves the zero buffer, so clamp(1e-10).rsqrt() is a uniform scale that the vnorm renormalization cancels.",
+        "symbols": [
+          "NOR_BETA2",
+          "muon_update"
+        ]
+      },
+      {
+        "type": "modified",
+        "label": "Contra-Muon fade extended to 2500",
+        "detail": "CONTRA_TO_NORMAL_END_STEP 2000→2500: the −0.2·G/‖G‖ term now decays linearly to 0 over steps 0–2500.",
+        "symbols": [
+          "CONTRA_TO_NORMAL_END_STEP",
+          "contra_coeff_for_step"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Muon momentum warmup/cooldown",
+        "detail": "set_hparams writes group['mu'] from _muon_mu_at_step: 0.85→0.95 linearly over steps 0–300, 0.95 until 2920, then down to 0.85 at train_steps=3020 (μ≈0.941 at the claimed step).",
+        "symbols": [
+          "_muon_mu_at_step",
+          "_MU_MIN",
+          "_MU_MAX",
+          "_MU_WARMUP_STEPS",
+          "_MU_COOLDOWN_STEPS",
+          "set_hparams"
+        ]
+      },
+      {
+        "type": "added",
+        "label": "Depth-scaled fc + CGI gain init",
+        "detail": "Block l's mlp.fc weight is scaled by 1−0.30·l/11; each block draws Rademacher s∈{±1}^768 and sets norm1.gains=1−0.14s, norm2.gains=1+0.14s.",
+        "symbols": [
+          "_DI_FC_ALPHA",
+          "_CGI_ALPHA"
+        ]
+      },
+      {
+        "type": "tuned",
+        "label": "PowerCool end 3105→3050, Adam β2 .99",
+        "detail": "FINAL_SCHEDULE_STEPS 3105→3050 moves every group's power-law decay 55 steps earlier (Muon from ~step 664, Adam groups from ~1637); AdamW betas (0.8, 0.95)→(0.8, 0.99).",
+        "symbols": [
+          "FINAL_SCHEDULE_STEPS",
+          "_lr",
+          "optimizer1"
+        ]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "2990",
+        "to": "2930"
+      },
+      {
+        "key": "schedule.end_step",
+        "label": "PowerCool t_end",
+        "from": "3105",
+        "to": "3050"
+      },
+      {
+        "key": "soft_muon.ceil",
+        "label": "Soft-Muon blend cap",
+        "from": "0.80",
+        "to": "0.00 (off)"
+      },
+      {
+        "key": "normuon_lite.beta2",
+        "label": "NorMuon-lite β2 (NOR_BETA2)",
+        "from": "0.95",
+        "to": "1.0 (inert)"
+      },
+      {
+        "key": "contra_muon.ramp_end_step",
+        "label": "Contra→normal end step",
+        "from": "2000",
+        "to": "2500"
+      },
+      {
+        "key": "hidden.momentum",
+        "label": "Muon μ",
+        "from": "0.95 constant",
+        "to": "0.85→0.95 (steps 0–300), 0.95→0.85 (2920–3020)"
+      },
+      {
+        "key": "aux.betas",
+        "label": "AdamW betas",
+        "from": "(0.8, 0.95)",
+        "to": "(0.8, 0.99)"
+      },
+      {
+        "key": "aurora.K",
+        "label": "Aurora rounds",
+        "from": "none",
+        "to": "3 (wide matrices only)"
+      },
+      {
+        "key": "aurora.beta",
+        "label": "Aurora D exponent",
+        "from": "none",
+        "to": "0.25"
+      },
+      {
+        "key": "depth_scaled_fc_init.alpha",
+        "label": "mlp.fc depth-scale α",
+        "from": "none",
+        "to": "0.30"
+      },
+      {
+        "key": "cgi_gain_init.alpha",
+        "label": "CGI gain α",
+        "from": "none",
+        "to": "0.14"
+      }
+    ],
+    "techniques_added": [
+      "aurora",
+      "mu_schedule",
+      "depth_scaled_fc_init",
+      "cgi_gain_init"
+    ],
+    "techniques_removed": [
+      "soft_muon",
+      "normuon_lite"
+    ],
+    "techniques_modified": [
+      "contra_muon",
+      "powercool",
+      "aux_adam"
+    ],
+    "parent_check": "consistent (diff vs #29 is small: the README's four changes plus the μ schedule, inits, Adam β2 and PowerCool-end tweaks)",
+    "noise": "Dense extra validation grid 2820–3020 (evaluation only); NS loop factored into _ns_inner; code comment says the μ cooldown spans the last 50 steps but _MU_COOLDOWN_STEPS=100."
+  },
+  "techniques": [
+    {
+      "id": "muon",
+      "note": "momentum lerp + grad.lerp(buf, μ); 12 NS iters (2, −1.5, 0.5), Schatten-4 prescale; ×max(1,m/n)^½"
+    },
+    {
+      "id": "soap_muon_mlp",
+      "note": "SOAP eigenbasis/Adam-denominator on mlp.fc & mlp.proj momentum before NS; freq 10, β2 0.90"
+    },
+    {
+      "id": "soap_muon_attn",
+      "note": "attn.v only: SOAP blend 0.95, denom floor 0.55, norm-preserving; no trust gate (attn.proj unused)"
+    },
+    {
+      "id": "contra_muon",
+      "note": "polar − c·G/‖G‖₄ (renormalized); c = 0.2 fading linearly to 0 at step 2500"
+    },
+    {
+      "id": "aurora",
+      "note": "mlp.proj (768×3072) only: K=3 leverage-rebalanced NS rounds, β=0.25, ε=1e-7"
+    },
+    {
+      "id": "uw_floor",
+      "note": "‖u‖/‖w‖ raised to 0.3825 on all hidden matrices; Muon wd unused"
+    },
+    {
+      "id": "radial_brake",
+      "note": "outward radial part ×0.5, inward ×1.0; post-step rescale to first-order target radius"
+    },
+    {
+      "id": "powercool",
+      "note": "lr = min(lr0, c·(3050−t)^1.2) per group, power 1.2"
+    },
+    {
+      "id": "split_cooldown",
+      "note": "implicit via per-group c: Muon decays from ≈ step 664, AdamW groups from ≈ step 1637"
+    },
+    {
+      "id": "mu_schedule",
+      "note": "μ 0.85→0.95 over steps 0–300; 0.95→0.85 over 2920–3020"
+    },
+    {
+      "id": "early_stop",
+      "note": "claimed 2930 vs train_steps 3020 (LR ≈2.8% of peak at 2930)"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "every param with 'proj' in its name zeroed (attn/mlp proj weights+biases, lm head)"
+    },
+    {
+      "id": "depth_scaled_fc_init",
+      "note": "mlp.fc weight × (1 − 0.30·l/11)"
+    },
+    {
+      "id": "cgi_gain_init",
+      "note": "norm1 = 1−0.14s, norm2 = 1+0.14s, Rademacher s per channel (shared within a block)"
+    },
+    {
+      "id": "aux_adam",
+      "note": "AdamW embed 0.3, head 1/320, 1-D 0.01; betas (0.8, 0.99), eps 1e-10, wd 0"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3020",
+    "steps.claimed": "2930",
+    "hidden.optimizer": "Muon + SOAP (MLP, V) + Contra-Muon + Aurora (mlp.proj)",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (MUON_WEIGHT_DECAY=0.025 passed but unused)",
+    "hidden.momentum": "0.85→0.95→0.85 (scheduled)",
+    "hidden.nesterov": "yes (grad.lerp(momentum, μ))",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5); 3×12 for mlp.proj",
+    "aux.optimizer": "AdamW",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99)",
+    "aux.wd": "0",
+    "schedule.kind": "PowerCool min(lr0, c·(t_end−t)^p)",
+    "schedule.power": "1.2",
+    "schedule.end_step": "3050",
+    "schedule.hidden_cooldown_frac": "≈0.782 of 3050, derived (Muon flat until ≈664)",
+    "schedule.aux_cooldown_frac": "≈0.463 of 3050, derived (AdamW flat until ≈1637)",
+    "init.proj": "zero",
+    "init.gains": "CGI Rademacher α=0.14",
+    "contra_muon.coeff": "-0.2",
+    "contra_muon.ramp_end_step": "2500",
+    "aurora.K": "3",
+    "aurora.beta": "0.25",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "radial_brake.inward_scale": "1.0",
+    "soap_muon_mlp.precond_freq": "10",
+    "soap_muon_mlp.beta2": "0.90",
+    "soap_muon_attn.v_blend": "0.95",
+    "depth_scaled_fc_init.alpha": "0.30"
+  },
+  "mechanisms": [
+    {
+      "id": "aurora",
+      "name": "Aurora leverage-balanced polar",
+      "explain": "For a wide update G (768×3072, only mlp.proj) D starts as 1/‖column‖; each of K=3 rounds normalizes G·diag(D) by its Schatten-4 estimate, runs 12 NS iterations, and (except the last) multiplies D by (0.25/ℓ_j)^0.25, where ℓ_j is column j's squared norm in the polar factor (these sum to 768, mean 0.25). The returned update is the polar factor of the rebalanced matrix, so hidden neurons with small momentum still get a roughly average-sized update column (the README's 'neuron death' motivation).",
+      "symbols": [
+        "zeropower_via_newtonschulz5",
+        "_ns_inner",
+        "gram_frobenius_norm_estimate"
+      ]
+    },
+    {
+      "id": "mu_schedule",
+      "name": "Muon momentum warmup/cooldown",
+      "explain": "_muon_mu_at_step sets μ each step: linear 0.85→0.95 over the first 300 steps, flat 0.95, then linear back to 0.85 over the last 100 steps of train_steps. μ drives both the momentum EMA (lerp weight 1−μ) and the Nesterov-style blend grad.lerp(buf, μ) that feeds SOAP/NS.",
+      "symbols": [
+        "_muon_mu_at_step",
+        "set_hparams"
+      ]
+    },
+    {
+      "id": "depth_scaled_fc_init",
+      "name": "Depth-scaled mlp.fc init",
+      "explain": "After PyTorch's default init, block l's mlp.fc weight is multiplied by 1 − 0.30·l/11, i.e. 1.0 in block 0 down to 0.70 in block 11, shrinking deeper MLP input projections at init.",
+      "symbols": [
+        "_DI_FC_ALPHA"
+      ]
+    },
+    {
+      "id": "cgi_gain_init",
+      "name": "CGI Rademacher gain split",
+      "explain": "Each block samples s∈{±1}^768 and sets norm1.gains = 1 − 0.14·s and norm2.gains = 1 + 0.14·s, so every channel starts tilted toward either the attention or the MLP branch while the mean gain stays 1. The gains are then trained by AdamW like other 1-D params.",
+      "symbols": [
+        "_CGI_ALPHA"
+      ]
+    }
+  ],
+  "caveats": "README says the schedule is 'unchanged from PR #294' with schedule_steps=3050, but #29's script uses FINAL_SCHEDULE_STEPS=3105, so the PowerCool end actually moved 3105→3050; the AdamW β2 change 0.95→0.99 is not mentioned in the README. README also says square/tall matrices use 'MuonEq + Polar Express NS-5'; the code uses the fixed (2, −1.5, 0.5) 12-iteration polynomial after a Schatten-4 prescale, with no MuonEq. Because train_steps stays 3020 while the claim is at 2930, only ~10 μ-cooldown steps happen before the claimed step (μ≈0.941), so the cooldown is nearly irrelevant to the result. Soft-Muon is still computed every step at zero weight (compute only). Earlier Aurora record #17 (another branch) applied Aurora to all non-square matrices with 2 rounds and β=0.5; here it is restricted to the wide mlp.proj.",
+  "new_technique_ids": []
+}

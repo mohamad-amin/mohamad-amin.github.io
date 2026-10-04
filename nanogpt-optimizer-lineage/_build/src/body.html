@@ -1,0 +1,113 @@
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="wordmark">Optimizer Lineage <span>· modded-nanogpt Track 3</span></div>
+      <div class="sub" id="summary-line">Every accepted result, how it descends from earlier ones, and exactly what changed.</div>
+    </div>
+    <nav class="views" role="tablist" aria-label="View">
+      <button role="tab" data-view="tree" aria-selected="true">Tree<kbd>1</kbd></button>
+      <button role="tab" data-view="outline" aria-selected="false">Outline<kbd>2</kbd></button>
+      <button role="tab" data-view="timeline" aria-selected="false">Timeline<kbd>3</kbd></button>
+      <button role="tab" data-view="genome" aria-selected="false">Genome<kbd>4</kbd></button>
+    </nav>
+    <div class="tools">
+      <div class="search">
+        <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="Find record, technique, author…  /" aria-label="Search records and techniques">
+        <div class="search-results" id="search-results" role="listbox" hidden></div>
+      </div>
+      <button id="theme-btn" class="icon-btn" title="Switch light / dark" aria-label="Switch light or dark theme">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button id="help-btn" class="icon-btn" title="How to read this page (?)" aria-label="Help and keyboard shortcuts">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M6.3 6.3a1.8 1.8 0 1 1 2.6 1.6c-.6.3-.9.7-.9 1.3v.3"/><circle cx="8" cy="11.6" r=".4" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="stage" id="stage" aria-label="Record lineage">
+      <div class="stage-views" id="stage-views">
+      <div class="lens-bar" id="lens-bar" hidden></div>
+      <div class="view view-tree" id="view-tree">
+        <svg id="tree-svg" role="img" aria-label="Lineage tree of all records"></svg>
+        <div class="minimap" title="Overview — click to move the view"><svg id="minimap"></svg></div>
+        <div class="zoom-ctl">
+          <button type="button" data-z="in" aria-label="Zoom in">+</button>
+          <button type="button" data-z="out" aria-label="Zoom out">−</button>
+          <button type="button" data-z="fit">Fit</button>
+          <button type="button" data-z="sel">Focus</button>
+        </div>
+      </div>
+      <div class="view view-outline" id="view-outline" hidden></div>
+      <div class="view view-timeline" id="view-timeline" hidden>
+        <svg id="timeline-svg" role="img" aria-label="Steps to 3.28 over time"></svg>
+        <div class="tl-ctl">
+          <span>x-axis</span>
+          <div class="seg" id="tl-x">
+            <button type="button" data-x="order" aria-pressed="true">Acceptance order</button>
+            <button type="button" data-x="date" aria-pressed="false">PR date</button>
+          </div>
+        </div>
+      </div>
+      <div class="view view-genome" id="view-genome" hidden></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </section>
+    <aside class="inspector" id="inspector" aria-live="polite"></aside>
+  </main>
+
+  <div class="overlay" id="diff" hidden>
+    <div class="diff-shell" role="dialog" aria-modal="true" aria-label="Code diff">
+      <div class="diff-top">
+        <h2>Code diff</h2>
+        <select id="diff-a" aria-label="Base record"></select>
+        <span class="arrow">→</span>
+        <select id="diff-b" aria-label="Changed record"></select>
+        <button type="button" class="nav-btn" id="diff-swap" title="Swap sides">⇄ Swap</button>
+        <span class="spacer"></span>
+        <div class="seg" id="diff-mode">
+          <button type="button" data-mode="unified" aria-pressed="true">Unified</button>
+          <button type="button" data-mode="split" aria-pressed="false">Split</button>
+        </div>
+        <label><input type="checkbox" id="diff-ignore"> Hide comments &amp; whitespace</label>
+        <label><input type="checkbox" id="diff-same"> Show unchanged blocks</label>
+        <button type="button" class="nav-btn primary" id="diff-close">Close <kbd class="k" style="background:transparent;color:inherit;border-color:currentColor">Esc</kbd></button>
+      </div>
+      <div class="diff-sum" id="diff-sum"></div>
+      <div class="diff-body">
+        <nav class="diff-nav" id="diff-nav" aria-label="Changed blocks"></nav>
+        <div class="diff-main" id="diff-main"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="help" hidden>
+    <div class="help-card" role="dialog" aria-modal="true" aria-label="How to read this page">
+      <button type="button" class="nav-btn help-close" id="help-close">Close</button>
+      <h2>How to read this page</h2>
+      <p>Each node is one accepted result of the modded-nanogpt optimization benchmark: a full training script for a fixed GPT-2-small model, data and batch size, where only the optimizer, its schedules and the initialization may change. The score is the number of steps needed to reach 3.28 validation loss. Fewer is better.</p>
+      <p>A record's <b>parent</b> is the result it was built on. Most parents are declared in the benchmark README ("Setup from #X"). The others are inferred from code similarity and chronology, and the page says which. Dashed links mark ideas borrowed from other records.</p>
+      <h3>The significance numbers</h3>
+      <p><b>Validity margin</b> is the benchmark's rule, (3.28 − mean)·√n, which must reach 0.004 (a one-sided z-test at σ = 0.0013, p &lt; 0.001).</p>
+      <p><b>Pairwise vs parent</b> applies the README's comparison rule: ((loss<sub>parent</sub> − loss) + Δsteps·0.0045/100) / √(1/n₁ + 1/n₂). It reaches 0.004 only when the logs prove the child really is better. <b>Effective step gain</b> converts the loss difference into steps at 0.0045 loss per 100 steps, so a record that saves 25 steps but ends 0.0014 higher in loss shows a gain of about −6.</p>
+      <h3>Diffs</h3>
+      <p>Code diffs are structure-aware. Functions, classes and per-section code are matched by name, so a moved function shows as unchanged and a renamed one as renamed. Lines are aligned with a patience diff, and changed tokens within a line are highlighted.</p>
+      <h3>Keyboard</h3>
+      <div class="keys">
+        <kbd class="k">← / →</kbd><span>Parent / the child on the way to its best descendant</span>
+        <kbd class="k">↑ / ↓</kbd><span>Previous / next sibling (in Outline: previous / next row)</span>
+        <kbd class="k">j / k</kbd><span>Next / previous record by number</span>
+        <kbd class="k">Shift + click</kbd><span>Compare the selected record with another one</span>
+        <kbd class="k">c</kbd><span>Compare with parent (press again to leave compare)</span>
+        <kbd class="k">d</kbd><span>Open the code diff</span>
+        <kbd class="k">1 – 4</kbd><span>Tree, Outline, Timeline, Genome</span>
+        <kbd class="k">f</kbd><span>Fit the tree to the screen</span>
+        <kbd class="k">/</kbd><span>Search</span>
+        <kbd class="k">Esc</kbd><span>Close overlays, leave compare, clear a lens</span>
+      </div>
+      <h3>Source</h3>
+      <p id="help-source"></p>
+    </div>
+  </div>
+  <div class="tooltip" id="tooltip" hidden></div>
+</div>

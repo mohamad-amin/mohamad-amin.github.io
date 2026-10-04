@@ -1,0 +1,135 @@
+{
+  "id": 7,
+  "parent": 3,
+  "short_name": "Muon²",
+  "edge": {
+    "title": "Muon → Muon²: Adam second-moment scaling before NS, lr 0.025→0.10",
+    "summary": "Starting from #3's baseline, Muon is replaced by Muon²: an Adam-style second-moment EMA v ← 0.95·v + 0.05·g² of the raw gradient divides the Nesterov momentum update elementwise (by √v + 1e-10) before the unchanged 12-step Newton–Schulz orthogonalization and aspect-ratio scaling. Orthogonalization therefore acts on an Adam-normalized direction, with per-coordinate gradient scales balanced first; v needs no bias correction because NS removes the global scale. Keeping #3's wd=0.0125 but raising lr 4x to 0.10 (lr·wd 3.1e-4 → 1.25e-3 per step at peak), it reaches 3.28 in 3325 steps on a single run, 175 fewer than #3.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "Second-moment scaling before NS",
+        "detail": "muon_sq_update: momentum.lerp_(grad, 1−mu); v.mul_(beta2).addcmul_(grad, grad, value=1−beta2); update = grad.lerp_(momentum, mu) / (v.sqrt() + eps); then zeropower_via_newtonschulz5 and max(1, rows/cols)**0.5. New state 'v'; beta2=0.95, eps=1e-10, no bias correction.",
+        "symbols": ["muon_sq_update", "MuonSq"]
+      },
+      {
+        "type": "tuned",
+        "label": "lr 0.025 → 0.10 (wd 0.0125 kept)",
+        "detail": "optimizer2 = MuonSq(lr=0.10, weight_decay=0.0125): #3's wd with 4x its lr, so the decoupled shrink lr·wd rises from 3.125e-4 to 1.25e-3 per step at peak.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "train_steps 3500 → 3325",
+        "detail": "Claimed step equals the scheduled end (no early stop).",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Inlined hparams; device log; renames",
+        "detail": "#3's muon_lr / muon_weight_decay constants are replaced by literals in the MuonSq call; adds a print0 of GPU name and world_size; Muon/muon_update renamed to MuonSq/muon_sq_update. Behavior-neutral.",
+        "symbols": ["print0", "MuonSq"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.optimizer",
+        "label": "hidden optimizer",
+        "from": "Muon",
+        "to": "MuonSq (Muon²)"
+      },
+      {
+        "key": "hidden.lr",
+        "label": "hidden lr",
+        "from": "0.025",
+        "to": "0.10"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "second-moment beta2",
+        "from": "—",
+        "to": "0.95"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "second-moment eps",
+        "from": "—",
+        "to": "1e-10"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "3500",
+        "to": "3325"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "3500",
+        "to": "3325"
+      }
+    ],
+    "techniques_added": ["muon_sq"],
+    "techniques_removed": ["muon"],
+    "techniques_modified": [],
+    "parent_check": "Inferred (README names no base): the script is #3's baseline version (train_gpt_simple.py at git 8118b7d, #3's lr 0.025 / wd 0.0125 / 3500 steps inline plus the device-name log line) with the Muon² edits; wd=0.0125 is carried over from #3.",
+    "noise": "Inlining of #3's muon_lr/muon_weight_decay constants, MuonSq/muon_sq_update renames, and the extra device log line."
+  },
+  "techniques": [
+    {
+      "id": "muon_sq",
+      "note": "lr 0.10, wd 0.0125, mu 0.95 Nesterov, beta2 0.95, eps 1e-10, NS 12 iters"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3325 steps"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "as #1: all 'proj' params (incl. LM head) zeroed; others torch default"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3325",
+    "steps.claimed": "3325",
+    "hidden.optimizer": "MuonSq (Muon²)",
+    "hidden.lr": "0.10",
+    "hidden.wd": "0.0125",
+    "hidden.momentum": "0.95",
+    "hidden.nesterov": "True",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95",
+    "hidden.eps": "1e-10",
+    "muon.ns_coeffs": "(2, -1.5, 0.5)",
+    "muon.update_scale": "max(1, rows/cols)**0.5",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "torch default nn.Linear U(±1/sqrt(fan_in)), std ≈ 0.0208 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "torch default U(±1/sqrt(fan_in)) for q/k/v/fc; proj biases zero",
+    "init.gains": "1"
+  },
+  "mechanisms": [
+    {
+      "id": "muon_sq",
+      "name": "Muon² (Adam-preconditioned Muon)",
+      "explain": "Alongside the Muon momentum, each hidden matrix keeps an EMA of squared raw gradients (beta2=0.95). The Nesterov momentum matrix is divided elementwise by √v + eps before Newton–Schulz, so orthogonalization is applied to an Adam-normalized direction rather than the raw momentum. Bias correction is unnecessary because NS divides by the Frobenius norm, so only relative per-coordinate scales matter.",
+      "symbols": ["muon_sq_update", "MuonSq"]
+    }
+  ],
+  "caveats": "Single run (3.2752, n=1), which does clear the single-run bar (3.28 − 3.2752 = 0.0048 ≥ 0.004). The results folder also ships train_gpt_simple_muonsq.py, rebased on the later #6 skeleton (explicit Gaussian init, zero biases, multi-trial loop, F.rms_norm); the logged run used the old #1/#3 skeleton with torch-default init.",
+  "new_technique_ids": []
+}

@@ -1,0 +1,141 @@
+{
+  "id": 44,
+  "parent": 41,
+  "short_name": "SOAP-all f1 + aux β2",
+  "edge": {
+    "title": "All-hidden SOAP f=1 + aux β2 split; Circuit/Contra/Aurora removed",
+    "summary": "Rebases #41 onto a simplified stack. SOAP preconditioning now covers every hidden matrix (q, k, v, attn.proj, mlp.fc, mlp.proj) with the eigenbasis refreshed every step (freq 10→1); attn.proj passes through the previously dormant bounded trust gate, and the V-specific SOAP blend (0.95) and denominator floor (0.55) are dropped. Circuit-Muon, Contra-Muon and Aurora are deleted (Muon is plain 12-step NS + aspect scale), along with inert Soft-Muon/NorMuon-lite/weight-decay code. 1-D params move to a bias-correction-free Adam with longer second-moment memory (β2: gains 0.99, biases 0.997, attn.proj.bias 0.9965), PowerCool now ends at 2900 (was 2980), the μ cooldown doubles to 200 steps, and CGI gain init uses α=0.125 with antithetic head-mean pairing in layers 6–11.",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "SOAP on all hidden matrices, freq 1",
+        "detail": "should_soap_param now selects q, k, v, attn.proj, mlp.fc and mlp.proj, and SOAP_PRECONDITION_FREQUENCY 10→1 refreshes the QR eigenbasis every step; V's 0.95 blend and the attention denominator floor 0.55 are dropped (full SOAP).",
+        "symbols": ["should_soap_param", "SOAP_PRECONDITION_FREQUENCY", "soap_precondition_momentum", "soap_update_preconditioner"]
+      },
+      {
+        "type": "modified",
+        "label": "attn.proj SOAP via bounded trust gate",
+        "detail": "With attn.proj now SOAP'd, the trust gate (dead code in #41) blends raw and SOAP momentum norm-preservingly: gate = agree·grad-alignment, clamped to floor 0.45 (fading to 0 over 1375–1625) and cap 0.85 until 1625.",
+        "symbols": ["trust_gate", "bounded_trust_gate", "norm_preserving_blend"]
+      },
+      {
+        "type": "added",
+        "label": "Aux β2 split, bias-free 1-D Adam",
+        "detail": "1-D params leave torch AdamW for a minimal Adam without bias correction (β1 0.8, lr 0.01): gains β2 0.99, attn.proj.bias 0.9965, all other biases 0.997; embed/head stay on fused AdamW β=(0.8,0.99).",
+        "symbols": ["Adam", "optimizer3", "gain_aux_params", "attn_proj_bias_params", "other_aux_params"]
+      },
+      {
+        "type": "removed",
+        "label": "Circuit-Muon, Contra-Muon, Aurora",
+        "detail": "The OV coupling pass, the −0.2 Contra term (ramped to 0 by 2500) and the K=3 Aurora path for wide mlp.proj are deleted; muon_update is now NS (12 iters) + √max(1,m/n) only.",
+        "symbols": ["circuit_muon", "contra_coeff_for_step", "_AURORA_K", "muon_update", "zeropower_via_newtonschulz5"]
+      },
+      {
+        "type": "tuned",
+        "label": "PowerCool t_end 2980→2900",
+        "detail": "LR now reaches 0 at step 2900; Muon LR leaves its plateau at ~514 instead of ~594 and the Adam groups at ~1487 instead of ~1567.",
+        "symbols": ["FINAL_SCHEDULE_STEPS", "_lr"]
+      },
+      {
+        "type": "tuned",
+        "label": "μ cooldown 100→200 steps",
+        "detail": "_MU_COOLDOWN_STEPS = 200: Muon momentum decays 0.95→0.85 over steps 2700–2900 (warmup unchanged).",
+        "symbols": ["_MU_COOLDOWN_STEPS", "_muon_mu_at_step"]
+      },
+      {
+        "type": "modified",
+        "label": "CGI α 0.125 + antithetic pairs",
+        "detail": "Gain split α 0.14→0.125; layers 6–11 use headmean_antithetic_pair: per 128-channel head the +1 count is shrunk halfway toward 64 and the paired layer (6/7, 8/9, 10/11) gets the complementary count, from a separately seeded generator.",
+        "symbols": ["_CGI_ALPHA", "_CGI_PAIR_FROM_LAYER", "_CGI_HEAD_MEAN_SHRINK", "headmean_antithetic_pair"]
+      },
+      {
+        "type": "refactor",
+        "label": "Dead-code removal, eval steps",
+        "detail": "Deletes inert Soft-Muon (ceil 0), NorMuon-lite (β2=1 ⇒ identity), unused MUON_WEIGHT_DECAY and SOAP blend/fade flags; denser eval steps from 2700; STOP_STEP env hook (default 2900, no effect).",
+        "symbols": ["soft_via_newtonschulz5", "NOR_BETA2", "MUON_WEIGHT_DECAY", "STOP_STEP"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "soap_muon_all.scope", "label": "SOAP coverage", "from": "mlp.fc, mlp.proj, attn.v", "to": "all hidden (q, k, v, attn.proj, mlp.fc, mlp.proj)"},
+      {"key": "soap_muon_all.precond_freq", "label": "SOAP basis refresh", "from": "10", "to": "1"},
+      {"key": "soap_muon_attn.denom_floor", "label": "Attn SOAP denom floor", "from": "0.55", "to": "none"},
+      {"key": "soap_muon_attn.v_blend", "label": "V SOAP blend", "from": "0.95", "to": "1.0"},
+      {"key": "schedule.end_step", "label": "PowerCool t_end", "from": "2980", "to": "2900"},
+      {"key": "mu_schedule.cooldown", "label": "μ cooldown steps", "from": "100", "to": "200"},
+      {"key": "init.gains", "label": "CGI gain init", "from": "α=0.14 Rademacher", "to": "α=0.125; antithetic head-mean pairs in layers 6–11"},
+      {"key": "aux.betas", "label": "1-D Adam betas", "from": "(0.8, 0.99), bias-corrected AdamW", "to": "β2 0.99 gains / 0.997 biases / 0.9965 attn.proj.bias, no bias correction"},
+      {"key": "contra_muon.coeff", "label": "Contra-Muon coeff", "from": "−0.2 → 0 by 2500", "to": "removed"},
+      {"key": "circuit_muon.damping", "label": "Circuit-Muon λ", "from": "1e-3", "to": "removed"},
+      {"key": "aurora.K", "label": "Aurora iterations", "from": "3", "to": "removed"},
+      {"key": "steps.claimed", "label": "Claimed step", "from": "2875", "to": "2750"}
+    ],
+    "techniques_added": ["soap_muon_all", "aux_beta2_split"],
+    "techniques_removed": ["circuit_muon", "contra_muon", "aurora", "soap_muon_mlp", "soap_muon_attn"],
+    "techniques_modified": ["powercool", "mu_schedule", "cgi_gain_init", "aux_adam"],
+    "parent_check": "consistent with declared #41 (README: relative to the 2875 base, PR #311): c44_p41 deletes exactly #41's Circuit-Muon block and keeps its HEAD_DIM constant; nearest-code is #40 only because removing Circuit-Muon undoes #41's main textual addition. soap_muon_mlp/soap_muon_attn are subsumed by soap_muon_all; none of #43's tail transforms are present.",
+    "noise": "Deletion of inert code (Soft-Muon branch, NorMuon-lite second moment, unused MUON_WEIGHT_DECAY, SOAP blend/fade/update-before-use flags, NO_CONTRA/NO_SOFT specs, attention_soap_blend_for_step), docstring/logging rewrites, EMA_Nesterov whitespace, relaxed progress assert, STOP_STEP hook, denser extra_val_steps."
+  },
+  "techniques": [
+    {"id": "muon", "note": "plain 12-iter NS (a,b,c = 2,−1.5,0.5), no Aurora; Nesterov-EMA μ; √max(1,m/n) scale"},
+    {"id": "soap_muon_all", "note": "q,k,v,attn.proj,mlp.fc,mlp.proj; basis refresh every step; β2 0.90; attn.proj trust-gated"},
+    {"id": "radial_brake", "note": "outward radial part of the update ×0.5; post-step rescale to first-order target radius"},
+    {"id": "uw_floor", "note": "update scaled up so ‖U‖F/‖W‖F ≥ 0.3825 on every Muon matrix; no weight decay"},
+    {"id": "ema_nesterov", "note": "lookahead 0.3·lr/lr0 along EMA(0.99) of per-step displacement, steps 300–1950"},
+    {"id": "powercool", "note": "min(lr0, c·(2900−t)^1.2): Muon decays from ~514, Adam groups from ~1487; LR→0 at 2900"},
+    {"id": "mu_schedule", "note": "μ 0.85→0.95 over first 300 steps; 0.95→0.85 over steps 2700–2900"},
+    {"id": "early_stop", "note": "claimed 2750 vs train_steps 2900"},
+    {"id": "zero_proj_init", "note": "every param named *proj* zeroed: attn.proj, mlp.proj, lm head (weights and biases)"},
+    {"id": "depth_scaled_fc_init", "note": "mlp.fc weight × (1 − 0.30·layer/11)"},
+    {"id": "cgi_gain_init", "note": "gains 1 ∓ 0.125·s; layers 0–5 Rademacher, 6–11 head-mean-shrunk antithetic pairs"},
+    {"id": "aux_adam", "note": "fused AdamW (bias-corrected) for embed (lr 0.3) and lm head (1/320); β(0.8,0.99), wd 0"},
+    {"id": "aux_beta2_split", "note": "1-D: bias-free Adam lr 0.01, β1 0.8; β2 gains 0.99 / biases 0.997 / attn.proj.bias 0.9965"}
+  ],
+  "hparams": {
+    "steps.scheduled": "2900",
+    "steps.claimed": "2750",
+    "hidden.optimizer": "Muon with SOAP preconditioning on all hidden matrices",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 (u/w floor + radius rescale instead)",
+    "hidden.momentum": "0.95 (0.85→0.95 over 300; 0.95→0.85 over 2700–2900)",
+    "hidden.nesterov": "True (update = (1−μ)·g + μ·m)",
+    "hidden.ns_iters": "12 (a,b,c = 2, −1.5, 0.5)",
+    "hidden.beta2": "0.90 (SOAP second moment and Gram EMA)",
+    "aux.optimizer": "AdamW (embed, head) + bias-correction-free Adam (1-D)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.99) embed/head; 1-D β2 split",
+    "aux_beta2_split.gains": "0.99",
+    "aux_beta2_split.biases": "0.997",
+    "aux_beta2_split.attn_proj_bias": "0.9965",
+    "schedule.kind": "PowerCool",
+    "schedule.power": "1.2",
+    "schedule.end_step": "2900",
+    "init.proj": "zero",
+    "init.gains": "CGI α=0.125 (antithetic head-mean pairs in layers 6–11)",
+    "depth_scaled_fc_init.alpha": "0.30",
+    "uw_floor.target": "0.3825",
+    "radial_brake.outward_scale": "0.5",
+    "soap_muon_all.precond_freq": "1",
+    "soap_muon_all.trust_gate": "attn.proj: floor 0.45→0 over 1375–1625, cap 0.85 until 1625",
+    "ema_nesterov.lookahead": "0.3·lr/lr0, steps 300–1950",
+    "ema_nesterov.gamma": "0.99",
+    "mu_schedule.cooldown": "200 steps (2700–2900)"
+  },
+  "mechanisms": [
+    {
+      "id": "soap_muon_all",
+      "name": "SOAP-Muon on all hidden matrices (freq 1)",
+      "explain": "Every hidden matrix keeps EMAs (β 0.90) of GGᵀ and GᵀG of its raw gradient and, after each update, refreshes the eigenbasis by re-sorting with Rayleigh quotients and one QR power-iteration step (eigh on first use; step 0 is unpreconditioned). The Nesterov momentum is rotated into that basis, divided by the square root of an EMA (β 0.90) of its own squared coordinates there, rotated back and rescaled to the momentum's norm before Newton–Schulz. For attn.proj the SOAP direction is blended with the raw momentum by the bounded trust gate (floor 0.45 until 1375, fading to 0 by 1625; cap 0.85 until 1625).",
+      "symbols": ["soap_precondition_momentum", "soap_update_preconditioner", "soap_basis_qr", "bounded_trust_gate"]
+    },
+    {
+      "id": "aux_beta2_split",
+      "name": "Aux β2 split (bias-free 1-D Adam)",
+      "explain": "1-D parameters go to a three-group minimal Adam: m ← lerp(m, g, 0.2), v ← lerp(v, g², 1−β2), p −= lr·m/(√v + 1e-10), with no (1−β^t) bias correction. β2 is 0.99 for RMSNorm gains, 0.9965 for attn.proj.bias and 0.997 for every other bias (incl. the lm-head bias), so bias second moments average over ~300 steps instead of ~100; all groups use lr 0.01 under the shared PowerCool aux constant.",
+      "symbols": ["Adam", "optimizer3", "other_aux_params", "attn_proj_bias_params"]
+    }
+  ],
+  "caveats": "The README lists every changed constant but not two code-level changes vs #41: (1) 1-D params switch from bias-corrected torch AdamW to a bias-correction-free Adam (the docstring frames this as replacing 'CenterShrinkAdam', which #41 never had); without bias correction early 1-D steps are larger (for β2=0.997: ≈3.7× at step 1, ≈5.5× near step 6, ≈2× at step 100, →1 by ~1000); (2) the antithetic head-mean CGI pairing in layers 6–11 (README mentions only α). The claim uses the n=20 H100 logs; the 8 A40 logs (first pass 2755) are a side check. The removed modules are described as loss-neutral by the README, which is not verifiable from code.",
+  "new_technique_ids": []
+}

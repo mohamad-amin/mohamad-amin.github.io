@@ -1,0 +1,161 @@
+{
+  "id": 35,
+  "parent": 21,
+  "short_name": "Shampoo pinv pf=1",
+  "edge": {
+    "title": "Shampoo retune: pinv roots, ε=0, precond every step, β2 0.9, lr 0.01",
+    "summary": "Keeps #21's DistributedShampoo setup but retunes it: inverse roots now use a pseudo-inverse (EigenConfig with PseudoInverseConfig and epsilon=0.0, so non-positive eigenvalues are dropped and no damping is added) and are recomputed every step (precondition_frequency=1), with Shampoo active from step 1. β2 falls to 0.9 for both the Kronecker factors and the Adam graft (graft eps 1e-15), and lr/wd move to 0.01/0.1, cutting the steps needed from 4100 to 3375 (n=2). Short-memory, undamped factors refreshed every step make the preconditioner track the recent gradient geometry closely; the README's 'One-Sided' label is not visible in the logged config (see caveats).",
+    "changes": [
+      {
+        "type": "modified",
+        "label": "Pseudo-inverse roots, epsilon 0",
+        "detail": "preconditioner_config=RootInvShampooPreconditionerConfig(amortized_computation_config=EigenConfig(rank_deficient_stability_config=PseudoInverseConfig())) with epsilon=0.0: eigenvalues ≤ 0 (rank_atol=rank_rtol=0) map to 0, the rest to λ^-1/4; no ridge term (was ε=1e-12).",
+        "symbols": ["PseudoInverseConfig", "EigenConfig", "RootInvShampooPreconditionerConfig"]
+      },
+      {
+        "type": "tuned",
+        "label": "precondition_frequency 5 → 1",
+        "detail": "Roots are recomputed every step; start_preconditioning_step=-1 now resolves to 1, so #21's Adam-only steps 1–4 disappear.",
+        "symbols": ["precondition_frequency"]
+      },
+      {
+        "type": "tuned",
+        "label": "β2 0.95 → 0.9; graft eps → 1e-15",
+        "detail": "shampoo_beta2 = 9e-1 feeds both betas[1] (factor EMAs) and the AdamPreconditionerConfig grafting second moment; grafting epsilon 1e-10 → 1e-15. β1 stays 0.9.",
+        "symbols": ["shampoo_beta2", "AdamPreconditionerConfig"]
+      },
+      {
+        "type": "tuned",
+        "label": "lr 0.0015 → 0.01, wd 0.2 → 0.1",
+        "detail": "Decoupled decay per step at peak rises from 3e-4 to 1e-3.",
+        "symbols": ["optimizer2"]
+      },
+      {
+        "type": "tuned",
+        "label": "Steps 4150/4100 → 3375/3375",
+        "detail": "train_steps=3375; the result is taken at the final step (no early stop).",
+        "symbols": ["train_steps"]
+      }
+    ],
+    "hparams_changed": [
+      {
+        "key": "hidden.lr",
+        "label": "Shampoo lr",
+        "from": "0.0015",
+        "to": "1e-2"
+      },
+      {
+        "key": "hidden.wd",
+        "label": "Shampoo wd",
+        "from": "0.2 (WeightDecayType.DECOUPLED)",
+        "to": "0.1 (WeightDecayType.DECOUPLED)"
+      },
+      {
+        "key": "hidden.beta2",
+        "label": "factor/graft beta2",
+        "from": "0.95 (betas[1], factor EMA)",
+        "to": "9e-1 (betas[1], factor EMA)"
+      },
+      {
+        "key": "hidden.eps",
+        "label": "Shampoo epsilon",
+        "from": "1e-12 (library default epsilon)",
+        "to": "0.0"
+      },
+      {
+        "key": "shampoo.precond_freq",
+        "label": "root refresh period",
+        "from": "5",
+        "to": "1"
+      },
+      {
+        "key": "shampoo.start_precond_step",
+        "label": "first Shampoo step",
+        "from": "-1 (→ 5)",
+        "to": "-1 (→ 1)"
+      },
+      {
+        "key": "shampoo.root_method",
+        "label": "root computation",
+        "from": "eigh (DefaultEigenConfig), epsilon perturbation before decomposition",
+        "to": "EigenConfig(rank_deficient_stability_config=PseudoInverseConfig())"
+      },
+      {
+        "key": "shampoo.grafting",
+        "label": "grafting",
+        "from": "AdamPreconditionerConfig(beta2=0.95, epsilon=1e-10)",
+        "to": "AdamPreconditionerConfig(beta2=9e-1, epsilon=1e-15)"
+      },
+      {
+        "key": "steps.scheduled",
+        "label": "train_steps",
+        "from": "4150",
+        "to": "3375"
+      },
+      {
+        "key": "steps.claimed",
+        "label": "claimed steps",
+        "from": "4100",
+        "to": "3375"
+      }
+    ],
+    "techniques_added": [],
+    "techniques_removed": ["early_stop"],
+    "techniques_modified": ["shampoo"],
+    "parent_check": "Consistent with #21 (same skeleton and library import; only the Shampoo config and step count change). However, the README's 'One-Sided Shampoo' is not reflected in the code: no inverse_exponent_override is set and both factor dims (768, 3072) are below max_preconditioner_dim=8192, so the distributed_shampoo copy vendored with #21 (and current upstream) applies −1/4 roots on both sides.",
+    "noise": "Trailing newline only."
+  },
+  "techniques": [
+    {
+      "id": "shampoo",
+      "note": "README: 'One-Sided'; code: -1/4 pinv roots both sides, pf=1, betas (0.9,0.9), lr 0.01, wd 0.1"
+    },
+    {
+      "id": "aux_adam",
+      "note": "unchanged: embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8,0.95), wd 0"
+    },
+    {
+      "id": "linear_cooldown",
+      "note": "cooldown_frac 0.7 over 3375 steps"
+    },
+    {
+      "id": "zero_proj_init",
+      "note": "proj weights zero (incl. LM head); all biases zero"
+    }
+  ],
+  "hparams": {
+    "steps.scheduled": "3375",
+    "steps.claimed": "3375",
+    "hidden.optimizer": "DistributedShampoo (distributed_shampoo library)",
+    "hidden.lr": "1e-2",
+    "hidden.wd": "0.1 (WeightDecayType.DECOUPLED)",
+    "hidden.momentum": "0.9 (betas[0])",
+    "hidden.nesterov": "False (beta3 = beta1)",
+    "hidden.beta2": "9e-1 (betas[1], factor EMA)",
+    "hidden.eps": "0.0",
+    "shampoo.precond_freq": "1",
+    "shampoo.start_precond_step": "-1 (→ 1)",
+    "shampoo.exponent": "-1/4 per side (library default 1/(2·order); no inverse_exponent_override)",
+    "shampoo.root_method": "EigenConfig(rank_deficient_stability_config=PseudoInverseConfig())",
+    "shampoo.max_precond_dim": "8192",
+    "shampoo.grafting": "AdamPreconditionerConfig(beta2=9e-1, epsilon=1e-15)",
+    "aux.optimizer": "AdamW (fused)",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "aux.eps": "1e-10",
+    "aux.wd": "0",
+    "schedule.kind": "stable then linear decay to 0",
+    "schedule.cooldown_frac": "0.7",
+    "schedule.warmup_steps": "0",
+    "init.hidden_std": "normal, std 0.33**0.5 / fan_in**0.5 ≈ 0.0207 (q, k, v, mlp.fc)",
+    "init.embed_std": "1 (N(0,1))",
+    "init.proj": "zero (attn.proj, mlp.proj and LM head weights)",
+    "init.bias": "zero (all biases)",
+    "init.gains": "1"
+  },
+  "mechanisms": [],
+  "caveats": "README calls this 'One-Sided Shampoo', but the logged configuration (RootInvShampooPreconditionerConfig without inverse_exponent_override) gives two-sided L^-1/4·M·R^-1/4 under both the distributed_shampoo copy vendored with #21 and current upstream; one-sided preconditioning could only come from a modified library that is not in the log. Tagged 'shampoo' for that reason. Like #21 it imports the external library instead of inlining it. n=2 (3.27656, 3.27675) on 8×H200; no PR link.",
+  "new_technique_ids": []
+}

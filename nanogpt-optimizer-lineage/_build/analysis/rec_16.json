@@ -1,0 +1,106 @@
+{
+  "id": 16,
+  "parent": 14,
+  "short_name": "SOAP-attn trust gate",
+  "edge": {
+    "title": "Trust-gated SOAP with denominator floor added on attn.proj weights",
+    "summary": "Extends #14's SOAP-Muon to the attention output projections (attn.proj; Q/K/V stay on the plain path) with two safeguards. The SOAP denominator is floored at 0.2× its RMS, capping per-coordinate amplification, and the SOAP direction s is mixed with the raw Nesterov momentum m through a scalar trust gate g = clip((cos(s,m) − 0.2)/0.8, 0, 1) · clip(cos(s,grad)/cos(m,grad), 0, 1), clamped to [0.45, 0.85] until step 1375 (floor fading to 0 by 1625, cap 1 afterwards); m + (s − m)·g is rescaled to ‖m‖_F before NS. MLP SOAP, Contra-Muon, NorMuon-lite, the u/w floor and the 3175-step schedule are unchanged; the claim moves from 3150 to 3125.",
+    "changes": [
+      {
+        "type": "added",
+        "label": "SOAP on attn.proj, denom floor 0.2",
+        "detail": "SOAP_PARAM_MODE = 'mlp_plus_attn_proj' adds *.attn.proj.weight to the SOAP set; for these soap_precondition_momentum uses denom_floor_ratio = ATTN_SOAP_DENOM_FLOOR = 0.20, clamping the √v denominator to ≥ 0.2·RMS(denominator).",
+        "symbols": ["should_soap_param", "soap_precondition_momentum", "ATTN_SOAP_DENOM_FLOOR", "SOAP_PARAM_MODE"]
+      },
+      {
+        "type": "added",
+        "label": "Geometric trust gate with bounds",
+        "detail": "trust_gate multiplies an agreement gate (cos(soap, raw) mapped from [0.2, 1] to [0, 1]) by a gradient-alignment gate cos(soap, grad)/cos(raw, grad); bounded_trust_gate clamps it to [0.45, 0.85] before step 1375, the floor fades linearly to 0 over 1375–1625, then [0, 1].",
+        "symbols": ["trust_gate", "bounded_trust_gate", "early_trust_floor_for_step", "Muon.step_count"]
+      },
+      {
+        "type": "added",
+        "label": "Norm-preserving SOAP/raw blend",
+        "detail": "norm_preserving_blend forms raw + (soap − raw)·gate and rescales it to the raw momentum's Frobenius norm; the result replaces the momentum fed to muon_update for attn.proj.",
+        "symbols": ["norm_preserving_blend"]
+      },
+      {
+        "type": "tuned",
+        "label": "Claim 3150 → 3125 (3175 scheduled)",
+        "detail": "train_steps stays 3175 with the same linear cooldown; the record is claimed at the 3125 checkpoint, where the LR is ≈2.2% of peak.",
+        "symbols": ["train_steps"]
+      },
+      {
+        "type": "refactor",
+        "label": "Config knobs, screening, logging",
+        "detail": "Env-overridable constants that reproduce #14 (SOAP_PRECONDITION_FREQUENCY=10, SOAP_DENOM_POWER=0.5, SOAP_BLEND=1.0, SOAP_UPDATE_BEFORE_USE=False, NOR_BETA2=0.95), EARLY_STOP/TARGET_VAL_LOSS screening off by default, val every 2 steps from 3000, LOG_DIR.",
+        "symbols": ["EARLY_STOP", "TARGET_VAL_LOSS", "SOAP_DENOM_POWER", "SOAP_BLEND"]
+      }
+    ],
+    "hparams_changed": [
+      {"key": "steps.claimed", "label": "claimed step", "from": "3150", "to": "3125"},
+      {"key": "soap_muon_attn.scope", "label": "attention SOAP params", "from": "—", "to": "attn.proj.weight"},
+      {"key": "soap_muon_attn.denom_floor", "label": "ATTN_SOAP_DENOM_FLOOR", "from": "—", "to": "0.20"},
+      {"key": "soap_muon_attn.trust_floor", "label": "ATTN_EARLY_TRUST_FLOOR", "from": "—", "to": "0.45 (until 1375, → 0 by 1625)"},
+      {"key": "soap_muon_attn.trust_cap", "label": "ATTN_EARLY_TRUST_CAP", "from": "—", "to": "0.85 (until 1625)"},
+      {"key": "soap_muon_attn.min_agree", "label": "ATTN_TRUST_MIN_AGREE", "from": "—", "to": "0.20"}
+    ],
+    "techniques_added": ["soap_muon_attn"],
+    "techniques_removed": [],
+    "techniques_modified": [],
+    "parent_check": "consistent — nearest-code is #14; #14's MLP SOAP path, Contra-Muon, NorMuon-lite and u/w floor are retained verbatim.",
+    "noise": "Experiment name/intuition strings, unused SOAP_PARAM_MODE branches, EARLY_STOP screen and TARGET_VAL_LOSS (both default off), dense tail validation, LOG_DIR/flush, TRAIN_PROGRESS_INTERVAL; SOAP denominator now max(√v, 1e-8) instead of √v + 1e-8 (negligible); the trailing log-file path line in the extracted script is an extraction artifact."
+  },
+  "techniques": [
+    {"id": "muon", "note": "Nesterov mu=0.95, 12 NS iters, √max(1, m/n) scale, lr 0.0375"},
+    {"id": "soap_muon_mlp", "note": "mlp.fc/mlp.proj: momentum whitened in GGᵀ/GᵀG eigenbases (β 0.90, refresh every 10), ungated"},
+    {"id": "soap_muon_attn", "note": "attn.proj only: denom floor 0.2×RMS, trust gate in [0.45, 0.85] until 1375, floor → 0 by 1625"},
+    {"id": "contra_muon", "note": "−0.2·M/σ̂max(M) around NS (CONTRA_MUON=0.4), M = (preconditioned) momentum"},
+    {"id": "normuon_lite", "note": "variance EMA (β2 0.95) along the longer dim, rsqrt-scaled, Frobenius norm restored"},
+    {"id": "uw_floor", "note": "update scaled up to ‖u‖_F/‖w‖_F = 0.35 when below; wd 0.025 passed but never applied"},
+    {"id": "aux_adam", "note": "AdamW lr embed 0.3 / head 1/320 / 1-D 0.01, betas (0.8, 0.95), eps 1e-10, wd 0"},
+    {"id": "linear_cooldown", "note": "flat, then linear to 0 over the last 70% of 3175 steps (all groups)"},
+    {"id": "zero_proj_init", "note": "every param with 'proj' in its name zeroed (attn/mlp proj and lm head, weights and biases)"},
+    {"id": "early_stop", "note": "claimed at step 3125 of 3175 scheduled (LR ≈2.2% of peak)"}
+  ],
+  "hparams": {
+    "steps.scheduled": "3175",
+    "steps.claimed": "3125",
+    "hidden.optimizer": "Muon + SOAP (MLP, gated attn.proj) + Contra-Muon + NorMuon-lite + u/w floor",
+    "hidden.lr": "0.0375",
+    "hidden.wd": "0 effective (MUON_WEIGHT_DECAY=0.025 passed, never applied)",
+    "hidden.momentum": "0.95",
+    "hidden.ns_iters": "12",
+    "hidden.beta2": "0.95 (NOR_BETA2, NorMuon-lite)",
+    "soap_muon_mlp.beta2": "0.90 (SOAP_BETA2; also covariance EMA beta)",
+    "soap_muon_mlp.precond_freq": "10",
+    "soap_muon_attn.scope": "attn.proj.weight (SOAP_PARAM_MODE='mlp_plus_attn_proj')",
+    "soap_muon_attn.denom_floor": "0.20",
+    "soap_muon_attn.trust_floor": "0.45",
+    "soap_muon_attn.trust_cap": "0.85",
+    "soap_muon_attn.floor_end_step": "1375",
+    "soap_muon_attn.floor_fade_end_step": "1625",
+    "soap_muon_attn.min_agree": "0.20",
+    "soap_muon_attn.min_grad_align": "0.00",
+    "soap_muon_attn.power": "1.00",
+    "contra_muon.coeff": "0.4 (CONTRA_MUON; subtracts 0.2 × normalized momentum)",
+    "uw_floor.target": "0.35",
+    "aux.embed_lr": "0.3",
+    "aux.head_lr": "1/320",
+    "aux.scalar_lr": "0.01",
+    "aux.betas": "(0.8, 0.95)",
+    "schedule.kind": "linear_cooldown",
+    "schedule.cooldown_frac": "0.7",
+    "init.proj": "zero (all params with 'proj' in name, incl. lm head and biases)"
+  },
+  "mechanisms": [
+    {
+      "id": "soap_muon_attn",
+      "name": "Trust-gated SOAP on attn.proj (Trustlight)",
+      "explain": "attn.proj weights get the same SOAP candidate as the MLP weights, but its √v denominator is clamped to at least 0.2× its RMS so no coordinate is amplified more than ~5× the typical gain. A per-matrix scalar gate multiplies an agreement term (cos(SOAP, raw momentum) rescaled from [0.2, 1]) by a gradient-alignment term (cos(SOAP, grad)/cos(raw, grad), clipped to [0, 1]); it is forced into [0.45, 0.85] before step 1375, the floor fades linearly to 0 by step 1625, and the cap becomes 1 after that. The momentum fed to NS is raw + (SOAP − raw)·gate, rescaled to the raw momentum's Frobenius norm, so stale or disagreeing whitening bases are down-weighted automatically.",
+      "symbols": ["trust_gate", "bounded_trust_gate", "early_trust_floor_for_step", "norm_preserving_blend", "soap_precondition_momentum"]
+    }
+  ],
+  "caveats": "The table reports p=0.34 vs #14, so the 25-step gain over #14 is not significant on its own. The gate is one scalar per matrix computed from global cosines with the raw gradient; at step 0 the SOAP candidate equals the raw momentum (no basis yet). Effective Muon wd 0. The benchmark links a log named fake_log_from_seed0.txt, and the extracted script ends with a stray log-path line (not valid Python). The benchmark README notes that whether the trust gate helps is still unknown.",
+  "new_technique_ids": []
+}
