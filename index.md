@@ -10,6 +10,7 @@ I use theoretical and empirical tools to study the foundations of Deep Learning,
 
 ## News
 
+- **[Oct 2026]** Our research blog, [Toner: Improving Muon and AdamW with Input Geometry](/blog/toner/), is now available, with [code and reproduction configs](https://github.com/mohamad-amin/Toner).
 - **[Jan 2026]** I'll be spending summer 2026 at [Jane Street NYC](https://www.janestreet.com/) as a Machine Learning Research Intern. Let's grab a coffee and talk about Claude Code, [context rot](https://research.trychroma.com/context-rot) or Music ([not AI related](https://open.spotify.com/playlist/37i9dQZEVXdjDYnDdycFmw?si=e503cf20c5a24ec0)) if you're around!
 - **[Nov 2025]** New preprint on enabling hesitation in LLMs through reinforcement learning from verifiable rewards is out on [arXiv](https://arxiv.org/abs/2511.11500)!
 - **[Feb 2025]** Our paper on [Coordinate-wise Adaptivity of Adam](https://arxiv.org/abs/2410.08198) has been accepted to [ICLR 2025](https://iclr.cc/) as a **Spotlight**.
